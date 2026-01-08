@@ -5,11 +5,18 @@ Scores text passages by relevance to user's learning goals.
 
 import re
 import math
-from typing import Optional
+from typing import Optional, Any
 from collections import Counter
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
+
+# Optional import for sentence_transformers
+try:
+    from sentence_transformers import SentenceTransformer
+    HAS_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    SentenceTransformer = None  # type: ignore
+    HAS_SENTENCE_TRANSFORMERS = False
 
 from app.config import settings
 
@@ -20,15 +27,20 @@ class RelevanceScorer:
     """
 
     def __init__(self):
-        self._model: Optional[SentenceTransformer] = None
+        self._model: Optional[Any] = None
         self._idf_cache: dict[str, float] = {}
         self._corpus_size = 0
 
     @property
-    def model(self) -> SentenceTransformer:
+    def model(self) -> Any:
         """Lazy-load the sentence transformer model."""
         if self._model is None:
-            model_name = settings.EMBEDDING_MODEL or "all-MiniLM-L6-v2"
+            if not HAS_SENTENCE_TRANSFORMERS:
+                raise ImportError(
+                    "sentence_transformers is required for semantic scoring. "
+                    "Install with: pip install sentence-transformers"
+                )
+            model_name = getattr(settings, 'EMBEDDING_MODEL', None) or "all-MiniLM-L6-v2"
             self._model = SentenceTransformer(model_name)
         return self._model
 
@@ -147,6 +159,10 @@ class RelevanceScorer:
         Returns:
             Semantic similarity score (0-1)
         """
+        if not HAS_SENTENCE_TRANSFORMERS:
+            # Fallback to TF-IDF based score when semantic model unavailable
+            return self.compute_tfidf_score(text, query)
+
         embeddings = self.model.encode([text, query], normalize_embeddings=True)
         similarity = np.dot(embeddings[0], embeddings[1])
         # Normalize to 0-1 range (cosine similarity is -1 to 1)
@@ -172,18 +188,24 @@ class RelevanceScorer:
             Dictionary with individual and combined scores
         """
         tfidf_score = self.compute_tfidf_score(text, query)
-        semantic_score = self.compute_semantic_score(text, query)
 
-        combined_score = (
-            tfidf_weight * tfidf_score +
-            semantic_weight * semantic_score
-        )
+        # Use TF-IDF only if sentence_transformers not available
+        if HAS_SENTENCE_TRANSFORMERS:
+            semantic_score = self.compute_semantic_score(text, query)
+            combined_score = (
+                tfidf_weight * tfidf_score +
+                semantic_weight * semantic_score
+            )
+        else:
+            semantic_score = tfidf_score  # Fallback
+            combined_score = tfidf_score
 
         return {
             "tfidf_score": round(tfidf_score, 4),
             "semantic_score": round(semantic_score, 4),
             "combined_score": round(combined_score, 4),
             "relevance_level": self._get_relevance_level(combined_score),
+            "using_semantic": HAS_SENTENCE_TRANSFORMERS,
         }
 
     def _get_relevance_level(self, score: float) -> str:
