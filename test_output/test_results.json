@@ -1,0 +1,701 @@
+{
+  "timestamp": "2026-01-08T23:20:36.068785",
+  "text_length": 5325,
+  "entities_extracted": 93,
+  "relations_extracted": 297,
+  "graph_nodes": 93,
+  "graph_edges": 297,
+  "metrics": {
+    "node_count": 93,
+    "edge_count": 284,
+    "density": 0.03319308087891538,
+    "connected_components": 18,
+    "largest_component_size": 70,
+    "node_type_distribution": {
+      "TECHNOLOGY": 26,
+      "METHOD": 18,
+      "CONCEPT": 11,
+      "ORGANIZATION": 5,
+      "PERSON": 28,
+      "DATASET": 5
+    },
+    "edge_type_distribution": {
+      "USES": 58,
+      "RELATED_TO": 163,
+      "ENABLES": 34,
+      "CONTRASTS_WITH": 21,
+      "PART_OF": 8
+    },
+    "top_central_nodes": [
+      [
+        "Transformer",
+        0.522
+      ],
+      [
+        "Pre-training",
+        0.239
+      ],
+      [
+        "Transformers",
+        0.196
+      ],
+      [
+        "self-attention",
+        0.152
+      ],
+      [
+        "BERT",
+        0.141
+      ],
+      [
+        "Attention Mechanism",
+        0.141
+      ],
+      [
+        "Self-Attention Mechanism",
+        0.13
+      ],
+      [
+        "self-attention mechanisms",
+        0.13
+      ],
+      [
+        "GPT",
+        0.12
+      ],
+      [
+        "Google",
+        0.12
+      ]
+    ],
+    "top_bridge_nodes": [
+      [
+        "Pre-training",
+        0.004
+      ],
+      [
+        "LSTMs",
+        0.003
+      ],
+      [
+        "self-attention mechanisms",
+        0.003
+      ],
+      [
+        "Google",
+        0.003
+      ],
+      [
+        "computer vision",
+        0.003
+      ]
+    ]
+  },
+  "evaluation": {
+    "coverage": {
+      "key_term_coverage": 1.0,
+      "terms_found": 13,
+      "terms_expected": 13
+    },
+    "accuracy": {
+      "type_accuracy": 1.0,
+      "correct_types": 5,
+      "total_checked": 5
+    },
+    "coherence": {
+      "meaningful_ratio": 0.5878787878787874,
+      "meaningful_count": 174.59999999999988,
+      "total_relations": 297
+    },
+    "overall_score": 0.876
+  },
+  "entities": [
+    {
+      "text": "Transformer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.99
+    },
+    {
+      "text": "Transformers",
+      "type": "TECHNOLOGY",
+      "confidence": 0.99
+    },
+    {
+      "text": "GPT",
+      "type": "TECHNOLOGY",
+      "confidence": 0.99
+    },
+    {
+      "text": "self-attention",
+      "type": "METHOD",
+      "confidence": 0.99
+    },
+    {
+      "text": "BERT",
+      "type": "TECHNOLOGY",
+      "confidence": 0.9
+    },
+    {
+      "text": "Pre-training",
+      "type": "METHOD",
+      "confidence": 0.9
+    },
+    {
+      "text": "Attention Mechanism",
+      "type": "CONCEPT",
+      "confidence": 0.9
+    },
+    {
+      "text": "Google",
+      "type": "ORGANIZATION",
+      "confidence": 0.8
+    },
+    {
+      "text": "ViT",
+      "type": "TECHNOLOGY",
+      "confidence": 0.8
+    },
+    {
+      "text": "Self-Attention Mechanism",
+      "type": "METHOD",
+      "confidence": 0.8
+    },
+    {
+      "text": "Vaswani",
+      "type": "PERSON",
+      "confidence": 0.7
+    },
+    {
+      "text": "Hochreiter",
+      "type": "PERSON",
+      "confidence": 0.7
+    },
+    {
+      "text": "Schmidhuber",
+      "type": "PERSON",
+      "confidence": 0.7
+    },
+    {
+      "text": "Devlin",
+      "type": "PERSON",
+      "confidence": 0.7
+    },
+    {
+      "text": "Dosovitskiy",
+      "type": "PERSON",
+      "confidence": 0.7
+    },
+    {
+      "text": "long short-term memory",
+      "type": "TECHNOLOGY",
+      "confidence": 0.7
+    },
+    {
+      "text": "LSTMs",
+      "type": "TECHNOLOGY",
+      "confidence": 0.7
+    },
+    {
+      "text": "RNNs",
+      "type": "TECHNOLOGY",
+      "confidence": 0.7
+    },
+    {
+      "text": "CNNs",
+      "type": "TECHNOLOGY",
+      "confidence": 0.7
+    },
+    {
+      "text": "Vision Transformer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.7
+    },
+    {
+      "text": "self-attention mechanisms",
+      "type": "METHOD",
+      "confidence": 0.7
+    },
+    {
+      "text": "Scaled dot-product attention",
+      "type": "METHOD",
+      "confidence": 0.7
+    },
+    {
+      "text": "encoder-decoder",
+      "type": "METHOD",
+      "confidence": 0.7
+    },
+    {
+      "text": "few-shot",
+      "type": "METHOD",
+      "confidence": 0.7
+    },
+    {
+      "text": "artificial intelligence",
+      "type": "CONCEPT",
+      "confidence": 0.7
+    },
+    {
+      "text": "computer vision",
+      "type": "CONCEPT",
+      "confidence": 0.7
+    },
+    {
+      "text": "Vaswani et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Cho et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Bahdanau et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Luong et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Devlin et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Dosovitskiy et al.",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "processing and machine",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "normalization and residual",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Hochreiter and Schmidhuber",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "attention and feed",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "activation and two",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Applications and Impact",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "BERT and Pre",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "modeling and next",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "vision and text",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Training and Optimization",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "German and English",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Work and Comparisons",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "fields and parameter",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Cho",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Bahdanau",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Luong",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Brown",
+      "type": "PERSON",
+      "confidence": 0.6
+    },
+    {
+      "text": "Google Brain",
+      "type": "ORGANIZATION",
+      "confidence": 0.6
+    },
+    {
+      "text": "Google Research",
+      "type": "ORGANIZATION",
+      "confidence": 0.6
+    },
+    {
+      "text": "OpenAI",
+      "type": "ORGANIZATION",
+      "confidence": 0.6
+    },
+    {
+      "text": "GitHub",
+      "type": "ORGANIZATION",
+      "confidence": 0.6
+    },
+    {
+      "text": "GPT-1",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "GPT-2",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "GPT-3",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "GPT-4",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Recurrent Neural Networks",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Gated Recurrent Units",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "GRUs",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "convolutional neural networks",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Longformer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Linformer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Performer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "BigBird",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "AlphaFold",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Codex",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "GitHub Copilot",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Adam optimizer",
+      "type": "TECHNOLOGY",
+      "confidence": 0.6
+    },
+    {
+      "text": "Multi-Head Attention",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "Positional encoding",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "Layer normalization",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "residual connections",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "masked language modeling",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "next sentence prediction",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "fine-tuning",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "Dropout",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "regularization",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "Label smoothing",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "zero-shot",
+      "type": "METHOD",
+      "confidence": 0.6
+    },
+    {
+      "text": "natural language processing",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "NLP",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "machine learning",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "Deep learning",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "neural machine translation",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "sequence-to-sequence",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "vanishing gradient problem",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "parallelization",
+      "type": "CONCEPT",
+      "confidence": 0.6
+    },
+    {
+      "text": "WMT 2014",
+      "type": "DATASET",
+      "confidence": 0.6
+    },
+    {
+      "text": "ImageNet",
+      "type": "DATASET",
+      "confidence": 0.6
+    },
+    {
+      "text": "GLUE",
+      "type": "DATASET",
+      "confidence": 0.6
+    },
+    {
+      "text": "SQuAD",
+      "type": "DATASET",
+      "confidence": 0.6
+    },
+    {
+      "text": "SWAG",
+      "type": "DATASET",
+      "confidence": 0.6
+    }
+  ],
+  "top_relations": [
+    {
+      "source": "Transformer",
+      "target": "Transformers",
+      "type": "RELATED_TO",
+      "confidence": 0.99
+    },
+    {
+      "source": "self-attention",
+      "target": "Attention Mechanism",
+      "type": "RELATED_TO",
+      "confidence": 0.82
+    },
+    {
+      "source": "BERT",
+      "target": "Pre-training",
+      "type": "RELATED_TO",
+      "confidence": 0.82
+    },
+    {
+      "source": "Transformer",
+      "target": "BERT",
+      "type": "RELATED_TO",
+      "confidence": 0.82
+    },
+    {
+      "source": "Transformers",
+      "target": "BERT",
+      "type": "RELATED_TO",
+      "confidence": 0.82
+    },
+    {
+      "source": "Transformer",
+      "target": "Pre-training",
+      "type": "RELATED_TO",
+      "confidence": 0.82
+    },
+    {
+      "source": "Transformer",
+      "target": "self-attention",
+      "type": "CONTRASTS_WITH",
+      "confidence": 0.79
+    },
+    {
+      "source": "Transformer",
+      "target": "self-attention",
+      "type": "RELATED_TO",
+      "confidence": 0.79
+    },
+    {
+      "source": "Transformer",
+      "target": "self-attention",
+      "type": "USES",
+      "confidence": 0.79
+    },
+    {
+      "source": "Transformer",
+      "target": "GPT",
+      "type": "RELATED_TO",
+      "confidence": 0.79
+    },
+    {
+      "source": "Transformer",
+      "target": "Transformers",
+      "type": "USES",
+      "confidence": 0.79
+    },
+    {
+      "source": "self-attention",
+      "target": "Self-Attention Mechanism",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Attention Mechanism",
+      "target": "Self-Attention Mechanism",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Transformer",
+      "target": "Google",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Transformers",
+      "target": "Google",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Transformer",
+      "target": "ViT",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Transformers",
+      "target": "ViT",
+      "type": "RELATED_TO",
+      "confidence": 0.74
+    },
+    {
+      "source": "Transformer",
+      "target": "Attention Mechanism",
+      "type": "CONTRASTS_WITH",
+      "confidence": 0.72
+    },
+    {
+      "source": "self-attention",
+      "target": "Attention Mechanism",
+      "type": "CONTRASTS_WITH",
+      "confidence": 0.72
+    },
+    {
+      "source": "Transformer",
+      "target": "Attention Mechanism",
+      "type": "ENABLES",
+      "confidence": 0.72
+    }
+  ]
+}
