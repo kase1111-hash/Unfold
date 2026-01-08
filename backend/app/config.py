@@ -65,6 +65,21 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Redis Cache
+    redis_url: str = "redis://localhost:6379/0"
+    redis_max_connections: int = 50
+    redis_socket_timeout: float = 5.0
+    redis_socket_connect_timeout: float = 5.0
+    cache_enabled: bool = True
+    cache_default_ttl: int = 3600  # 1 hour
+
+    # Database Pool Settings
+    db_pool_size: int = 20
+    db_max_overflow: int = 40
+    db_pool_recycle: int = 1800  # 30 minutes
+    db_pool_timeout: int = 30
+    db_statement_timeout: int = 30000  # 30 seconds in ms
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
