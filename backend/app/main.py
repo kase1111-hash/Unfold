@@ -7,6 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as api_v1_router
 from app.config import get_settings
+from app.db import (
+    close_all_databases,
+    init_postgres,
+    init_neo4j,
+    init_faiss,
+    create_neo4j_indexes,
+    create_tables,
+)
 
 settings = get_settings()
 
@@ -17,13 +25,39 @@ async def lifespan(app: FastAPI):
     # Startup
     print(f"Starting {settings.app_name} v{settings.app_version}")
     print(f"Environment: {settings.environment}")
-    # TODO: Initialize database connections
-    # TODO: Initialize Neo4j connection
-    # TODO: Initialize vector store connection
+
+    # Initialize PostgreSQL
+    try:
+        await init_postgres()
+        if settings.environment == "development":
+            await create_tables()
+        print("✓ PostgreSQL connected")
+    except Exception as e:
+        print(f"✗ PostgreSQL connection failed: {e}")
+
+    # Initialize Neo4j
+    try:
+        await init_neo4j()
+        await create_neo4j_indexes()
+        print("✓ Neo4j connected")
+    except Exception as e:
+        print(f"✗ Neo4j connection failed: {e}")
+
+    # Initialize FAISS vector store
+    try:
+        await init_faiss()
+        print("✓ FAISS vector store initialized")
+    except ImportError:
+        print("✗ FAISS not installed (optional)")
+    except Exception as e:
+        print(f"✗ FAISS initialization failed: {e}")
+
     yield
+
     # Shutdown
     print("Shutting down...")
-    # TODO: Close database connections
+    await close_all_databases()
+    print("All database connections closed")
 
 
 app = FastAPI(

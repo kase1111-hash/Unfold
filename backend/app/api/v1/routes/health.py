@@ -7,6 +7,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.config import get_settings
+from app.db import (
+    check_postgres_connection,
+    check_neo4j_connection,
+    check_faiss_connection,
+)
 
 router = APIRouter()
 settings = get_settings()
@@ -84,32 +89,17 @@ async def detailed_health_check() -> DetailedHealthStatus:
 
 async def _check_postgresql() -> dict[str, str | bool]:
     """Check PostgreSQL connectivity."""
-    # TODO: Implement actual database connection check
-    return {
-        "connected": False,
-        "status": "not_configured",
-        "message": "Database connection not yet implemented",
-    }
+    return await check_postgres_connection()
 
 
 async def _check_neo4j() -> dict[str, str | bool]:
     """Check Neo4j connectivity."""
-    # TODO: Implement actual Neo4j connection check
-    return {
-        "connected": False,
-        "status": "not_configured",
-        "message": "Neo4j connection not yet implemented",
-    }
+    return await check_neo4j_connection()
 
 
 async def _check_vector_store() -> dict[str, str | bool]:
     """Check vector store connectivity."""
-    # TODO: Implement actual vector store connection check
-    return {
-        "connected": False,
-        "status": "not_configured",
-        "message": "Vector store connection not yet implemented",
-    }
+    return await check_faiss_connection()
 
 
 @router.get("/health/ready")
