@@ -1,0 +1,184 @@
+# Unfold Production Docker Compose
+# Usage: docker-compose -f docker-compose.prod.yml up -d
+
+version: "3.9"
+
+services:
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    container_name: unfold-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-cache:/var/cache/nginx
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - unfold-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Frontend Application
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    container_name: unfold-frontend
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://backend:8000}
+    networks:
+      - unfold-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: unfold-backend
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-unfold}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-unfold}
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=${NEO4J_USER:-neo4j}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ALGORITHM=HS256
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://unfold.example.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - unfold-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: unfold-postgres
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-unfold}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-unfold}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-unfold} -d ${POSTGRES_DB:-unfold}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - unfold-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Neo4j Graph Database
+  neo4j:
+    image: neo4j:5.17-community
+    container_name: unfold-neo4j
+    environment:
+      - NEO4J_AUTH=${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD}
+      - NEO4J_PLUGINS=["apoc"]
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      - NEO4J_dbms_memory_heap_initial__size=512m
+      - NEO4J_dbms_memory_heap_max__size=1G
+      - NEO4J_dbms_memory_pagecache_size=512m
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    networks:
+      - unfold-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: unfold-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - unfold-network
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+networks:
+  unfold-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+volumes:
+  postgres-data:
+    driver: local
+  neo4j-data:
+    driver: local
+  neo4j-logs:
+    driver: local
+  redis-data:
+    driver: local
+  nginx-cache:
+    driver: local
