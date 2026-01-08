@@ -183,3 +183,147 @@ export interface GraphVisualizationData {
   nodes: GraphVisualizationNode[];
   links: GraphVisualizationLink[];
 }
+
+// Scholar Mode types (Phase 5)
+export interface CitationNode {
+  paper_id: string;
+  title: string;
+  authors: string[];
+  year?: number;
+  venue?: string;
+  citation_count: number;
+  abstract?: string;
+  doi?: string;
+  url?: string;
+  depth: number;
+}
+
+export interface CitationEdge {
+  source: string;
+  target: string;
+  type: "cites" | "cited_by" | "related";
+}
+
+export interface CitationTree {
+  root: CitationNode;
+  nodes: CitationNode[];
+  edges: CitationEdge[];
+  stats: {
+    total_nodes: number;
+    total_edges: number;
+    max_depth: number;
+  };
+}
+
+export interface CredibilityScore {
+  overall_score: number;
+  level: "high" | "medium" | "low" | "unknown";
+  components: {
+    citation_score: number;
+    venue_score: number;
+    author_score: number;
+    recency_score: number;
+    altmetric_score: number;
+  };
+  metadata: {
+    citation_count: number;
+    journal_impact_factor?: number;
+    altmetric_attention?: number;
+    is_peer_reviewed: boolean;
+    is_retracted: boolean;
+  };
+  warnings: string[];
+  notes: string[];
+}
+
+export interface ReadingSnapshot {
+  snapshot_id: string;
+  document_id: string;
+  created_at: string;
+  reflection_type: string;
+  complexity_level: number;
+  comprehension_score: number;
+  time_spent_minutes: number;
+  summary?: string;
+  key_takeaways: string[];
+  questions: string[];
+  connections: string[];
+  highlights_count: number;
+  sections_read: number;
+  scroll_depth: number;
+}
+
+export interface LearningJourney {
+  snapshot_count: number;
+  first_read: ReadingSnapshot;
+  latest_read?: ReadingSnapshot;
+  diffs: LearningDiff[];
+  summary: {
+    total_time_minutes: number;
+    time_span_days?: number;
+    comprehension_growth?: number;
+    current_comprehension: number;
+    questions_remaining: number;
+    total_takeaways: number;
+    total_connections?: number;
+    total_highlights?: number;
+  };
+}
+
+export interface LearningDiff {
+  from_snapshot: string;
+  to_snapshot: string;
+  time_between_hours: number;
+  changes: {
+    complexity_change: number;
+    comprehension_change: number;
+    total_time_added: number;
+  };
+  content: {
+    new_takeaways: string[];
+    resolved_questions: string[];
+    new_questions: string[];
+    new_connections: string[];
+    new_highlights: number;
+  };
+  progress: {
+    new_sections: number;
+    scroll_depth_change: number;
+  };
+  insights: {
+    learning_velocity: number;
+    engagement_trend: string;
+  };
+}
+
+export type AnnotationType =
+  | "highlight"
+  | "comment"
+  | "question"
+  | "answer"
+  | "link"
+  | "tag";
+
+export type AnnotationVisibility = "private" | "group" | "public";
+
+export interface Annotation {
+  annotation_id: string;
+  document_id: string;
+  user_id: string;
+  user_name: string;
+  type: AnnotationType;
+  visibility: AnnotationVisibility;
+  content: string;
+  selected_text?: string;
+  position: {
+    start: number;
+    end: number;
+    section_id?: string;
+  };
+  created_at: string;
+  updated_at: string;
+  parent_id?: string;
+  tags: string[];
+  reactions: Record<string, string[]>;
+  is_deleted: boolean;
+}

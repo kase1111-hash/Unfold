@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from app.api.v1.routes import auth, documents, graph, health, learning
+from app.api.v1.routes import auth, documents, graph, health, learning, scholar
 
 router = APIRouter()
 
@@ -12,3 +12,4 @@ router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 router.include_router(documents.router, prefix="/documents", tags=["Documents"])
 router.include_router(graph.router, prefix="/graph", tags=["Knowledge Graph"])
 router.include_router(learning.router, tags=["Learning"])
+router.include_router(scholar.router, tags=["Scholar"])
