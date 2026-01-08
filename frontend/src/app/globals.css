@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 250 250 248;
+    --foreground: 26 26 26;
+    --primary: 14 165 233;
+    --primary-foreground: 255 255 255;
+    --muted: 241 245 249;
+    --muted-foreground: 100 116 139;
+    --border: 226 232 240;
+    --input: 226 232 240;
+    --ring: 14 165 233;
+  }
+
+  .dark {
+    --background: 15 23 42;
+    --foreground: 248 250 252;
+    --primary: 56 189 248;
+    --primary-foreground: 15 23 42;
+    --muted: 30 41 59;
+    --muted-foreground: 148 163 184;
+    --border: 51 65 85;
+    --input: 51 65 85;
+    --ring: 56 189 248;
+  }
+
+  * {
+    @apply border-slate-200 dark:border-slate-700;
+  }
+
+  body {
+    @apply bg-reading-bg text-reading-text dark:bg-slate-900 dark:text-slate-100;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer components {
+  /* Button styles */
+  .btn {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply btn bg-primary-600 text-white hover:bg-primary-700;
+  }
+
+  .btn-secondary {
+    @apply btn bg-slate-100 text-slate-900 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700;
+  }
+
+  .btn-ghost {
+    @apply btn hover:bg-slate-100 dark:hover:bg-slate-800;
+  }
+
+  /* Input styles */
+  .input {
+    @apply flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100;
+  }
+
+  /* Card styles */
+  .card {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800;
+  }
+
+  /* Reading interface styles */
+  .reading-content {
+    @apply font-serif text-lg leading-relaxed;
+  }
+
+  .reading-content p {
+    @apply mb-4;
+  }
+
+  .reading-content h1,
+  .reading-content h2,
+  .reading-content h3 {
+    @apply font-sans font-bold mb-4 mt-8;
+  }
+
+  .reading-content h1 {
+    @apply text-3xl;
+  }
+
+  .reading-content h2 {
+    @apply text-2xl;
+  }
+
+  .reading-content h3 {
+    @apply text-xl;
+  }
+
+  /* Concept highlight */
+  .concept-highlight {
+    @apply bg-reading-concept rounded px-1 py-0.5 cursor-pointer hover:bg-blue-200 transition-colors;
+  }
+
+  /* Text selection highlight */
+  .text-highlight {
+    @apply bg-reading-highlight;
+  }
+
+  /* Complexity slider */
+  .complexity-slider {
+    @apply w-full h-2 rounded-lg appearance-none cursor-pointer bg-slate-200 dark:bg-slate-700;
+  }
+
+  .complexity-slider::-webkit-slider-thumb {
+    @apply appearance-none w-5 h-5 rounded-full bg-primary-600 cursor-pointer;
+  }
+
+  /* Graph node styles */
+  .graph-node {
+    @apply cursor-pointer transition-all duration-200;
+  }
+
+  .graph-node:hover {
+    @apply opacity-80;
+  }
+
+  .graph-node-label {
+    @apply text-xs font-medium fill-slate-700 dark:fill-slate-200;
+  }
+}
+
+@layer utilities {
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+}
