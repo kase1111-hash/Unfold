@@ -123,59 +123,56 @@ class TestSM2Algorithm:
 
     def test_sm2_initial_values(self):
         """Test SM2 algorithm with initial values."""
-        from app.services.learning.scheduler import SM2Scheduler
+        from app.services.learning.sm2 import SM2Scheduler, ResponseQuality
 
         scheduler = SM2Scheduler()
-        result = scheduler.calculate_next_review(
-            quality=4,
-            repetitions=0,
-            easiness=2.5,
-            interval=1,
-        )
+        card_id = "test_card_1"
 
-        assert "next_interval" in result or isinstance(result, tuple)
+        # Add card and review with quality 4
+        scheduler.add_card(card_id)
+        state = scheduler.review_card(card_id, ResponseQuality.CORRECT_HESITATION)
+
+        assert state.interval >= 1
+        assert state.easiness_factor >= 1.3
+        assert state.repetitions == 1
 
     def test_sm2_quality_5_increases_interval(self):
         """Test that quality 5 increases the interval."""
-        from app.services.learning.scheduler import SM2Scheduler
+        from app.services.learning.sm2 import SM2Scheduler, ResponseQuality
 
         scheduler = SM2Scheduler()
+        card_id = "test_card_2"
 
         # First review with quality 5
-        result1 = scheduler.calculate_next_review(
-            quality=5,
-            repetitions=1,
-            easiness=2.5,
-            interval=1,
-        )
+        scheduler.add_card(card_id)
+        state1 = scheduler.review_card(card_id, ResponseQuality.PERFECT)
+        interval1 = state1.interval
 
         # Second review with quality 5
-        result2 = scheduler.calculate_next_review(
-            quality=5,
-            repetitions=2,
-            easiness=2.6,
-            interval=6,
-        )
+        state2 = scheduler.review_card(card_id, ResponseQuality.PERFECT)
+        interval2 = state2.interval
 
         # Interval should increase
-        if isinstance(result1, tuple) and isinstance(result2, tuple):
-            assert result2[0] >= result1[0]
+        assert interval2 >= interval1
 
     def test_sm2_quality_0_resets(self):
         """Test that quality 0 resets the card."""
-        from app.services.learning.scheduler import SM2Scheduler
+        from app.services.learning.sm2 import SM2Scheduler, ResponseQuality
 
         scheduler = SM2Scheduler()
-        result = scheduler.calculate_next_review(
-            quality=0,
-            repetitions=5,
-            easiness=2.5,
-            interval=30,
-        )
+        card_id = "test_card_3"
 
-        # Should reset interval to 1 or similar low value
-        if isinstance(result, tuple):
-            assert result[0] <= 3  # Interval should be low
+        # Build up some repetitions
+        scheduler.add_card(card_id)
+        scheduler.review_card(card_id, ResponseQuality.PERFECT)
+        scheduler.review_card(card_id, ResponseQuality.PERFECT)
+
+        # Now fail with quality 0
+        state = scheduler.review_card(card_id, ResponseQuality.BLACKOUT)
+
+        # Should reset interval and repetitions
+        assert state.interval == 1  # Reset to 1 day
+        assert state.repetitions == 0  # Reset repetitions
 
 
 class TestEngagementTracking:
