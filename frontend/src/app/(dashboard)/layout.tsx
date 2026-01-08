@@ -12,6 +12,7 @@ import {
   LogOut,
   Upload,
   User,
+  GraduationCap,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { useAuthStore } from "@/store";
@@ -20,6 +21,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/graph", label: "Knowledge Graph", icon: Brain },
+  { href: "/flashcards", label: "Flashcards", icon: GraduationCap },
   { href: "/upload", label: "Upload", icon: Upload },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
