@@ -327,3 +327,179 @@ export interface Annotation {
   reactions: Record<string, string[]>;
   is_deleted: boolean;
 }
+
+// Ethics & Privacy types (Phase 6)
+export type ConsentType =
+  | "analytics"
+  | "personalization"
+  | "third_party"
+  | "marketing"
+  | "research";
+
+export type ConsentStatus = "granted" | "denied" | "pending" | "withdrawn";
+
+export interface ConsentRecord {
+  consent_id: string;
+  user_id: string;
+  consent_type: ConsentType;
+  status: ConsentStatus;
+  granted_at?: string;
+  expires_at?: string;
+  withdrawn_at?: string;
+}
+
+export type TransparencyLevel = "full" | "summary" | "minimal" | "redacted";
+
+export type MetricType =
+  | "ai_usage"
+  | "content_processing"
+  | "data_access"
+  | "recommendation"
+  | "bias_detection"
+  | "privacy_action";
+
+export interface AIOperation {
+  operation_id: string;
+  operation_type: string;
+  timestamp: string;
+  model_used?: string;
+  input_tokens: number;
+  output_tokens: number;
+  purpose: string;
+  data_accessed: string[];
+  confidence_score?: number;
+  human_review_required: boolean;
+}
+
+export interface EthicsMetric {
+  metric_id: string;
+  metric_type: MetricType;
+  name: string;
+  value: number;
+  unit: string;
+  timestamp: string;
+  context: Record<string, unknown>;
+}
+
+export interface UserEthicsProfile {
+  user_id: string;
+  created_at: string;
+  transparency_level: TransparencyLevel;
+  receive_ethics_reports: boolean;
+  allow_aggregated_analytics: boolean;
+  total_ai_operations: number;
+  total_documents_processed: number;
+  bias_alerts_received: number;
+  privacy_actions_taken: number;
+}
+
+export interface EthicsDashboard {
+  user_id: string;
+  generated_at: string;
+  period_start: string;
+  period_end: string;
+  summary: {
+    ai_operations_count: number;
+    documents_analyzed: number;
+    bias_findings_count: number;
+    privacy_score: number;
+  };
+  operations_by_type: Record<string, number>;
+  operations_by_day: Record<string, number>;
+  recent_operations: AIOperation[];
+  metrics: EthicsMetric[];
+  recommendations: string[];
+}
+
+export type BiasCategory =
+  | "gender"
+  | "race"
+  | "age"
+  | "ability"
+  | "religion"
+  | "nationality"
+  | "political"
+  | "other";
+
+export type Severity = "low" | "medium" | "high";
+
+export interface BiasFinding {
+  finding_id: string;
+  category: BiasCategory;
+  severity: Severity;
+  text: string;
+  suggestion: string;
+  position: {
+    start: number;
+    end: number;
+    section?: string;
+  };
+}
+
+export interface SentimentResult {
+  label: "positive" | "negative" | "neutral";
+  score: number;
+  confidence: number;
+}
+
+export interface BiasAuditReport {
+  report_id: string;
+  document_id: string;
+  generated_at: string;
+  findings: BiasFinding[];
+  sentiment: SentimentResult;
+  inclusivity_score: number;
+  reading_level: number;
+  summary: {
+    total_findings: number;
+    by_category: Record<string, number>;
+    by_severity: Record<string, number>;
+  };
+  recommendations: string[];
+}
+
+export interface ContentCredential {
+  credential_id: string;
+  document_id: string;
+  content_hash: string;
+  created_at: string;
+  actor: string;
+  validation_status: "valid" | "invalid" | "pending" | "tampered";
+  assertions: ProvenanceAssertion[];
+}
+
+export interface ProvenanceAssertion {
+  assertion_id: string;
+  type: string;
+  timestamp: string;
+  actor: string;
+  description: string;
+  signature?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ProvenanceManifest {
+  manifest_id: string;
+  document_id: string;
+  created_at: string;
+  credentials: ContentCredential[];
+  validation_summary: {
+    total_credentials: number;
+    valid: number;
+    invalid: number;
+    tampered: number;
+  };
+  chain_valid: boolean;
+}
+
+export interface PrivacyReport {
+  report_id: string;
+  user_id: string;
+  generated_at: string;
+  data_categories: string[];
+  consents: ConsentRecord[];
+  data_summary: Record<string, string>;
+  processing_activities: string[];
+  third_party_recipients: string[];
+  user_rights: string[];
+}
