@@ -1,5 +1,5 @@
 """API v1 route modules."""
 
-from app.api.v1.routes import documents, health
+from app.api.v1.routes import auth, documents, health
 
-__all__ = ["documents", "health"]
+__all__ = ["auth", "documents", "health"]
