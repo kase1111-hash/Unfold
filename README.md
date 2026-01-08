@@ -1,439 +1,658 @@
-🧬 Unfold — Technical Specification (v1.0, 2026)
+# Unfold
 
-Mission:
-Build a modular AI-assisted reading and comprehension platform that bridges the gap between dense academic/technical texts and genuine understanding — emphasizing ethics, explainability, and educational collaboration.
+**AI-Assisted Reading and Comprehension Platform**
 
-🧱 1. System Overview
+Unfold bridges the gap between dense academic/technical texts and genuine understanding through modular AI assistance, emphasizing ethics, explainability, and educational collaboration.
 
-Unfold is composed of five primary layers, each designed to interact modularly:
+## Table of Contents
 
-Layer	Purpose
-1️⃣ Document Ingestion & Validation	Securely parse, verify, and index academic/technical documents.
-2️⃣ Semantic Parsing & Knowledge Graph	Convert text into structured, queryable nodes and relationships.
-3️⃣ Reading Interface	Interactive dual-view (technical ↔ conceptual) document explorer.
-4️⃣ Adaptive Learning & Focus Engine	Personalized summarization, focus, and spaced-repetition systems.
-5️⃣ Ethical & Academic Framework	Provenance, compliance, and bias audit systems for transparency.
-⚙️ 2. System Architecture
-Core Components:
-Frontend (Next.js + React)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Frontend Development](#frontend-development)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [License](#license)
+
+## Features
+
+### Document Management
+- **PDF/EPUB Ingestion** - Upload and process academic documents
+- **DOI Validation** - Verify document authenticity via CrossRef
+- **Provenance Tracking** - C2PA-compliant content fingerprinting
+- **License Compliance** - Creative Commons validation
+
+### Knowledge Graph
+- **Entity Extraction** - Automatic concept identification using spaCy + LLMs
+- **Relation Mapping** - Build semantic connections between concepts
+- **Graph Visualization** - Interactive D3.js exploration
+- **External Linking** - Wikipedia and Semantic Scholar integration
+
+### Reading Interface
+- **Dual-View Mode** - Toggle between technical and conceptual views
+- **Complexity Slider** - Adjust content difficulty dynamically
+- **Inline Annotations** - Highlight and comment on passages
+- **Semantic Overlays** - Term tooltips with concept previews
+
+### Adaptive Learning
+- **Flashcard Generation** - AI-powered question synthesis (T5/FLAN)
+- **Spaced Repetition** - SM2 algorithm for optimal review scheduling
+- **Engagement Tracking** - Monitor reading patterns and comprehension
+- **Export Options** - Anki, Obsidian, and Markdown formats
+
+### Scholar Mode
+- **Citation Trees** - Explore reference chains (up to 3 hops)
+- **Credibility Scoring** - CrossRef + Altmetrics integration
+- **Zotero Export** - RIS, BibTeX, and CSL-JSON formats
+- **Reflection Engine** - Track understanding evolution over time
+
+### Ethics & Privacy
+- **Bias Auditing** - Sentiment analysis and inclusivity checks
+- **GDPR Compliance** - Consent management and data portability
+- **Differential Privacy** - Anonymized analytics
+- **Transparency Dashboard** - AI operation tracking
+
+## Architecture
+
+```
+Frontend (Next.js + React + Tailwind)
 │
 ├── Reading Interface (dual-view, semantic overlays)
+├── Knowledge Graph Visualization (D3.js)
+├── Flashcard System
 │
-Backend (FastAPI + LangGraph + Neo4j/Weaviate)
+Backend (FastAPI + Python 3.11+)
 │
-├── Ingestion Service
-├── Validation Service (CrossRef, ORCID, DOI)
-├── Knowledge Graph Engine
-├── Paraphrasing/LLM Engine
-├── Adaptive Learning Service
-├── Provenance/Bias Audit Module
+├── Document Ingestion Service
+├── Knowledge Graph Engine (Neo4j)
+├── Learning Services (SM2, Flashcards)
+├── Scholar Services (Citations, Credibility)
+├── Ethics Services (Provenance, Privacy)
 │
 Storage Layer
-├── PostgreSQL (user data)
-├── Neo4j or Weaviate (semantic graph)
-├── Pinecone/FAISS (vector embeddings)
-└── C2PA Ledger (content fingerprints)
+├── PostgreSQL (user data, sessions)
+├── Neo4j (semantic graph)
+└── FAISS (vector embeddings)
+```
 
-🧩 3. Functional Modules
-A. Document Ingestion & Validation
+## Quick Start
 
-Goal: Verify authenticity and legality of documents before parsing.
+```bash
+# Clone the repository
+git clone https://github.com/your-org/unfold.git
+cd unfold
 
-Key Features:
+# Start with Docker Compose
+docker-compose up -d
 
-PDF/EPUB ingestion via Apache Tika or PyPDF2
+# Access the application
+# Frontend: http://localhost:3000
+# API Docs: http://localhost:8000/docs
+```
 
-OCR fallback for scanned docs via Tesseract
+## Installation
 
-DOI/metadata validation via CrossRef, Unpaywall, CORE
+### Prerequisites
 
-Copyright compliance with Creative Commons API
+- Python 3.11+
+- Node.js 18+
+- PostgreSQL 14+
+- Neo4j 5+ (optional, for knowledge graph)
+- Docker & Docker Compose (recommended)
 
-Provenance hashing with W3C C2PA and SHA-256
+### Backend Setup
 
-Author validation via ORCID or ROR APIs
+```bash
+cd backend
 
-Data Flow:
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# or: venv\Scripts\activate  # Windows
 
-Upload → Validate hash & license
+# Install dependencies
+pip install -r requirements.txt
 
-Extract metadata (title, authors, DOI, abstract)
+# Set environment variables
+cp .env.example .env
+# Edit .env with your configuration
 
-Store record → forward to Semantic Parser
+# Initialize database
+python -c "from app.db import create_tables; import asyncio; asyncio.run(create_tables())"
 
-B. Semantic Parsing & Knowledge Graph
+# Run the server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
 
-Goal: Transform documents into structured knowledge entities.
+### Frontend Setup
 
-Implementation:
+```bash
+cd frontend
 
-Use LangGraph / LangChain for orchestration.
+# Install dependencies
+npm install
 
-Entity extraction via spaCy + GPT-4o for relations.
+# Set environment variables
+cp .env.example .env.local
+# Edit .env.local with your API URL
 
-Graph database: Neo4j or Weaviate (vector-native preferred).
+# Run development server
+npm run dev
+```
 
-Multimodal support:
+## Configuration
 
-Text embeddings: OpenAI text-embedding-3-large
+### Environment Variables
 
-Image embeddings: CLIP or OpenCLIP
+**Backend (.env)**
 
-Diagram parsing: Pix2Struct or BLIP-2
+```bash
+# Application
+APP_NAME=Unfold
+APP_VERSION=1.0.0
+ENVIRONMENT=development
 
-Graph schema:
+# Database
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=unfold
+POSTGRES_USER=unfold
+POSTGRES_PASSWORD=your-secure-password
 
-Node types: Concept, Author, Paper, Method, Dataset
-Relationships: EXPLAINS, CITES, CONTRASTS_WITH, DERIVES_FROM
+# Neo4j (optional)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your-neo4j-password
 
+# Security
+JWT_SECRET=your-jwt-secret-key
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
 
-External linkers:
+# AI Services (optional)
+OPENAI_API_KEY=your-openai-key
 
-Wikipedia, Semantic Scholar, arXiv API
+# CORS
+CORS_ORIGINS=["http://localhost:3000"]
+```
 
-DOI resolver for persistent references
+**Frontend (.env.local)**
 
-Storage:
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
-Semantic relationships in graph DB
+## API Documentation
 
-Text vectors in Pinecone/FAISS
+### Authentication
 
-Cached summaries in PostgreSQL
+All protected endpoints require a Bearer token in the Authorization header.
 
-C. Reading Interface (Frontend)
+#### Register User
+```http
+POST /api/v1/auth/register
+Content-Type: application/json
 
-Goal: Human-centered reading experience with dual complexity modes.
-
-Stack:
-
-Frontend: Next.js + React + Tailwind + D3.js
-
-API Layer: Axios → FastAPI
-
-State Management: Zustand or Redux Toolkit
-
-Views:
-
-Technical View: Raw formatted text + inline reference popovers
-
-Conceptual View: LLM-generated paraphrases & summaries
-
-Hybrid Slider: Dynamic complexity gradient toggle
-
-Features:
-
-Term hover tooltips → concept graph preview
-
-“Explain Like I’m 5” / “Expert Mode” toggle
-
-Semantic scroll-sync (text ↔ node map)
-
-Highlight-based Q&A popup (ChatGPT-style chat on selected content)
-
-D. Intelligent Focus Mode
-
-Goal: Prioritize sections relevant to user goals.
-
-Techniques:
-
-TF-IDF + BERT embeddings → initial relevance scoring
-
-Graph traversal (shortest path from target node)
-
-Attention heatmaps via Captum/BertViz (explainability)
-
-Relevance feedback loop:
-
-User feedback → stored as reinforcement signals (RLHF-lite)
-
-Progressive reveal UI (accordion expansion for deeper dives)
-
-E. Adaptive Learning Layer
-
-Goal: Track comprehension and enable active recall.
-
-Subsystems:
-
-Engagement tracking: dwell time, scroll velocity, annotation density
-
-Flashcard generation via T5 or FLAN-UL2 question synthesis
-
-Spaced repetition scheduling (SM2 algorithm)
-
-Export to Anki / Obsidian via Markdown
-
-Gamification (optional):
-
-Progress streaks, mastery badges, reflection streaks
-
-F. Scholar Mode
-
-Goal: Recursive academic exploration and citation hygiene.
-
-Capabilities:
-
-Depth-controlled exploration (cap recursion at 3 hops)
-
-Tree view of references with citation chains
-
-Citation generation via Zotero API
-
-Source credibility scoring:
-
-CrossRef impact factor
-
-Altmetrics data integration
-
-Peer-review flags (Scopus/OpenAlex APIs)
-
-G. Bookmarking & Reflection Engine
-
-Goal: Capture metacognitive evolution.
-
-Implementation:
-
-Time-based snapshot diffs (graph-diff algorithm)
-
-User reflection storage → graph node annotation
-
-Visual timelines / mind maps (D3.js)
-
-Collaborative reflection clusters (CRDTs)
-
-H. Ethical & Academic Framework
-
-Goal: Ensure academic integrity, privacy, and inclusivity.
-
-Components:
-
-Provenance via C2PA manifest + DOI revalidation
-
-Anonymized analytics (Mixpanel or PostHog)
-
-Bias audit module (text sentiment & fairness analysis)
-
-Partner integrations:
-
-Creative Commons
-
-OpenAI/Anthropic safety endpoints
-
-UNESCO / FAIR AI compliance tracking
-
-🔐 4. Data Schemas
-Document Record
 {
-  "doc_id": "sha256:xxxx",
-  "title": "string",
-  "authors": ["John Doe", "Jane Smith"],
-  "doi": "10.xxxx/abc123",
-  "license": "CC-BY-4.0",
-  "source": "arXiv",
-  "vector_id": "uuid",
-  "graph_nodes": ["concept_001", "author_002"]
+  "email": "user@example.com",
+  "username": "johndoe",
+  "password": "SecurePassword123!"
 }
+```
 
-Knowledge Graph Node
+#### Login
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+
 {
-  "node_id": "concept_001",
-  "type": "Concept",
-  "label": "Quantum Entanglement",
-  "embedding": [0.34, 0.56, ...],
-  "relations": [{"type": "CITES", "target": "concept_004"}]
+  "email": "user@example.com",
+  "password": "SecurePassword123!"
 }
+```
 
-Reflection Snapshot
+Response:
+```json
 {
-  "user_id": "uuid",
-  "timestamp": "2026-01-05T13:00:00Z",
-  "nodes_added": 12,
-  "nodes_deleted": 1,
-  "notes": "Now understand Bell's theorem implications"
+  "user": {
+    "user_id": "uuid",
+    "email": "user@example.com",
+    "username": "johndoe"
+  },
+  "tokens": {
+    "access_token": "eyJ...",
+    "refresh_token": "eyJ...",
+    "token_type": "bearer"
+  }
 }
+```
 
-🧠 5. AI Models
-Purpose	Suggested Model	Notes
-Entity/Relation Extraction	GPT-4o / Claude 3.5	Structured JSON output
-Summarization/Paraphrasing	GPT-4o-mini / Mistral 8x7B	Multi-level simplification
-Question Generation	T5 / FLAN-UL2	SRS integration
-Image Captioning	BLIP-2 / Pix2Struct	Diagram understanding
-Bias Audit	RoBERTa Sentiment / Perspective API	Language inclusivity checks
-🧭 6. APIs and Integrations
-Function	API
-Document Validation	CrossRef, Unpaywall, CORE
-Metadata & Author ID	ORCID, ROR
-Citation Management	Zotero
-Provenance	C2PA
-Knowledge Links	Wikipedia, arXiv, Semantic Scholar
-LMS Integration	LTI 1.3 (Canvas, Moodle)
-Analytics	Mixpanel / PostHog
-Storage	AWS S3 / GCS / IPFS (optional decentralized mode)
-💡 7. Security & Privacy
+### Documents
 
-All data encrypted (AES-256 at rest, TLS 1.3 in transit)
+#### Upload Document
+```http
+POST /api/v1/documents/upload
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
 
-Differential privacy for analytics
+file: <PDF or EPUB file>
+```
 
-Strict user consent for data collection
+#### List Documents
+```http
+GET /api/v1/documents/?page=1&page_size=20
+Authorization: Bearer <token>
+```
 
-OpenAI usage governed under academic license agreements
+#### Get Document with Paraphrase
+```http
+GET /api/v1/documents/{doc_id}/paraphrase?complexity=50
+Authorization: Bearer <token>
+```
 
-🧰 8. Development Environment
-Stack	Tool
-Backend	Python 3.11+, FastAPI, LangChain/LangGraph
-Frontend	Next.js (React 18+), Tailwind, D3.js
-Database	PostgreSQL + Neo4j (or Weaviate)
-Embeddings	Pinecone or FAISS
-Auth	OAuth2 + JWT (optional ORCID login)
-Testing	PyTest + Cypress
-DevOps	Docker Compose + GitHub Actions CI/CD
-🚀 9. Roadmap Summary
-Milestone	Deliverables
-v0.1	Document ingestion + validation
-v0.2	Semantic graph + embeddings
-v0.3	Reading interface MVP
-v0.4	Adaptive focus mode
-v0.5	Scholar Mode + reflection engine
-v1.0	Ethics + provenance + public beta
-🧩 10. Licensing & Open Science
+### Knowledge Graph
 
-License: AGPL v3 (to ensure community benefit)
+#### Build Graph from Text
+```http
+POST /api/v1/graph/build
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Open access to non-proprietary models and datasets
+{
+  "text": "Your document text here...",
+  "source_doc_id": "doc-123",
+  "extract_relations": true,
+  "generate_embeddings": true
+}
+```
 
-Opt-in Transparency Portal:
+#### Search Nodes
+```http
+GET /api/v1/graph/nodes?query=quantum&node_type=Concept&limit=50
+Authorization: Bearer <token>
+```
 
-Model prompts
+#### Get Related Nodes
+```http
+GET /api/v1/graph/nodes/{node_id}/related?max_depth=2&limit=50
+Authorization: Bearer <token>
+```
 
-Bias metrics
+#### Link to Wikipedia
+```http
+GET /api/v1/graph/link/wikipedia/{entity}
+```
 
-Audit logs
+#### Search Academic Papers
+```http
+GET /api/v1/graph/link/papers?query=machine+learning&limit=10
+```
 
-Citation sources
+### Learning System
 
-1. System Overview
-Strengths: The five-layer modular design promotes separation of concerns, making it easier to iterate on individual components (e.g., swapping out the knowledge graph backend without disrupting the frontend). This aligns with microservices principles and facilitates contributions from open-source communities under AGPL v3.
-Challenges: Inter-layer communication could introduce latency if not optimized—e.g., real-time updates from the adaptive learning layer to the frontend.
-Suggestions:
+#### Generate Flashcards
+```http
+POST /api/v1/learning/flashcards/generate
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Add a sixth "Orchestration Layer" using tools like Apache Airflow or LangGraph extensions for workflow automation, ensuring smooth data flow across layers.
-Define clear APIs between layers (e.g., gRPC for low-latency backend comms) to enable plugin-based extensions, like third-party LLM integrations.
+{
+  "text": "Your study material here...",
+  "num_cards": 5,
+  "difficulty": "intermediate"
+}
+```
 
-2. System Architecture
-Strengths: The stack choice (Next.js/FastAPI/LangGraph/Neo4j) is solid—performant, scalable, and community-supported. Incorporating vector stores like Weaviate (with its hybrid search) over pure Neo4j could enhance semantic queries. C2PA for provenance is a smart nod to emerging content authenticity standards.
-Challenges: Multi-database management (PostgreSQL + Neo4j/Weaviate + Pinecone) risks data silos; ensure eventual consistency via event-driven patterns (e.g., Kafka).
-Suggestions:
+#### Review Flashcard (SM2)
+```http
+POST /api/v1/learning/flashcards/review
+Authorization: Bearer <token>
+Content-Type: application/json
 
-For storage, consider a unified vector-graph hybrid like Weaviate or Milvus to consolidate embeddings and relations, reducing query hops.
-Add a caching layer (Redis) for frequent accesses, like paraphrase generations, to cut LLM API costs.
-Visualize the architecture with a diagram in docs—use Mermaid.js for embeddable flowcharts.
+{
+  "card_id": "card-123",
+  "quality": 4
+}
+```
 
-3. Functional Modules
-A. Document Ingestion & Validation
-Strengths: Comprehensive validation pipeline builds trust; ORCID/ROR integration ensures author credibility in academic contexts.
-Challenges: API rate limits (e.g., CrossRef) could bottleneck bulk uploads; handle with async queues.
-Suggestions:
+Quality ratings:
+- 0: Complete blackout
+- 1: Incorrect, recognized after
+- 2: Incorrect, seemed easy after
+- 3: Correct with difficulty
+- 4: Correct with hesitation
+- 5: Perfect recall
 
-Enhance OCR with multimodal models like Donut (for structured docs) to better handle tables/formulas in scanned PDFs.
-Add plagiarism checks via tools like Turnitin API or simple cosine similarity on embeddings.
+#### Get Due Flashcards
+```http
+GET /api/v1/learning/flashcards/due?limit=20
+Authorization: Bearer <token>
+```
 
-B. Semantic Parsing & Knowledge Graph
-Strengths: LangChain orchestration + spaCy/GPT-4o for extraction is efficient; multimodal support (CLIP/Pix2Struct) makes it versatile for STEM texts.
-Challenges: Graph schema might bloat with large docs; enforce node pruning based on relevance scores.
-Suggestions:
+#### Export Flashcards
+```http
+POST /api/v1/learning/export/flashcards
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Extend relations with temporal edges (e.g., EVOLVED_FROM for historical concepts) to support reflection timelines.
-For external linkers, integrate Hugging Face datasets API for open-source data augmentation.
-Prototype Tip: I could simulate a mini knowledge graph here using NetworkX (available in my environment) on a sample text excerpt. If you'd like, provide a short document snippet, and I'll code a basic extraction.
+{
+  "flashcards": [
+    {"question": "What is...", "answer": "It is..."}
+  ],
+  "format": "anki_csv",
+  "title": "My Study Deck"
+}
+```
 
-C. Reading Interface (Frontend)
-Strengths: Dual-view with hybrid slider is intuitive; Zustand for state keeps it lightweight.
-Challenges: Real-time paraphrase generation could strain client-side resources; offload to backend via WebSockets.
-Suggestions:
+Supported formats: `json`, `anki_csv`, `anki_txt`, `anki_json`, `obsidian_sr`, `obsidian_callout`, `markdown_table`
 
-Integrate accessibility features like ARIA labels and voice-over support for conceptual views.
-Add collaborative editing (e.g., via ShareDB) for teacher-student annotations.
+### Scholar Mode
 
-D. Intelligent Focus Mode
-Strengths: BERT + graph traversal for prioritization is explainable; RLHF-lite feedback loop enables personalization.
-Challenges: Attention heatmaps via Captum require PyTorch integration, which might complicate the backend.
-Suggestions:
+#### Build Citation Tree
+```http
+POST /api/v1/scholar/citations/tree
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Incorporate user-defined weights (e.g., "prioritize examples over theory") for finer control.
-Visualize relevance with heatmaps in the UI using libraries like React-Heatmap.
+{
+  "doi": "10.1038/nature12373",
+  "max_depth": 2,
+  "refs_per_level": 10,
+  "cites_per_level": 10
+}
+```
 
-E. Adaptive Learning Layer
-Strengths: SM2 for SRS is proven; T5 for flashcards ensures high-quality generation.
-Challenges: Privacy in tracking (dwell time) must comply with GDPR; use on-device computation where possible.
-Suggestions:
+#### Score Paper Credibility
+```http
+POST /api/v1/scholar/credibility/score
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Add adaptive quizzing with branching logic based on confidence scores.
-Integrate with wearables (e.g., via Apple HealthKit) for focus metrics like attention spans.
+{
+  "doi": "10.1038/nature12373"
+}
+```
 
-F. Scholar Mode
-Strengths: Recursion cap prevents infinite loops; credibility scoring via Altmetrics adds rigor.
-Challenges: API dependencies (Scopus) could incur costs; cache results aggressively.
-Suggestions:
+#### Export to Zotero
+```http
+POST /api/v1/scholar/zotero/export
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Add controversy detection (e.g., via Perspective API) to flag debated topics.
-Support offline mode with pre-fetched reference graphs for mobile users.
+{
+  "items": [
+    {
+      "title": "Paper Title",
+      "authors": ["Author Name"],
+      "year": 2024,
+      "doi": "10.1234/example"
+    }
+  ],
+  "format": "bibtex"
+}
+```
 
-G. Bookmarking & Reflection Engine
-Strengths: Graph-diff for time-lapses is innovative; CRDTs enable real-time collab without conflicts.
-Suggestions:
+#### Create Reading Snapshot
+```http
+POST /api/v1/scholar/reflection/snapshot
+Authorization: Bearer <token>
+Content-Type: application/json
 
-Export reflections as interactive Jupyter notebooks for advanced users.
-Use AI to generate "insight summaries" from diffs, e.g., "Your grasp of quantum concepts improved by linking to relativity."
+{
+  "document_id": "doc-123",
+  "reflection_type": "deep_analysis",
+  "complexity_level": 70,
+  "summary": "Key understanding...",
+  "key_takeaways": ["Point 1", "Point 2"]
+}
+```
 
-H. Ethical & Academic Framework
-Strengths: Bias audits and FAIR compliance position Unfold as a leader in responsible AI.
-Challenges: Anonymized analytics must balance utility with privacy; differential privacy helps here.
-Suggestions:
+### Ethics & Privacy
 
-Add an "Ethics Dashboard" for users to view their data's provenance chain.
-Integrate with emerging standards like EU AI Act audits via tools like AIF360.
+#### Create Provenance Credential
+```http
+POST /api/v1/ethics/provenance/create
+Authorization: Bearer <token>
+Content-Type: application/json
 
-4. Data Schemas
-Strengths: JSON schemas are clear and extensible; embedding vectors support efficient similarity searches.
-Challenges: Large embeddings could inflate storage; use quantization (e.g., via FAISS) for optimization.
-Suggestions:
+{
+  "document_id": "doc-123",
+  "content": "Document content..."
+}
+```
 
-Add versioning to document records (e.g., "edition": "2nd") for handling updates.
-Validate schemas with tools like Pydantic in the backend for type safety.
+#### Audit Document for Bias
+```http
+POST /api/v1/ethics/bias/audit
+Authorization: Bearer <token>
+Content-Type: application/json
 
-5. AI Models
-Strengths: Tiered model selection (e.g., GPT-4o-mini for efficiency) optimizes costs; BLIP-2 for images handles multimodal needs.
-Challenges: Model drift over time; plan for periodic fine-tuning.
-Suggestions:
+{
+  "document_id": "doc-123",
+  "content": "Content to analyze..."
+}
+```
 
-Fallback to open models like Llama 3.1 for privacy-sensitive deployments.
-Use ensemble methods (e.g., voting) for critical tasks like bias audits.
+#### Record Consent (GDPR)
+```http
+POST /api/v1/ethics/privacy/consent
+Authorization: Bearer <token>
+Content-Type: application/json
 
-6. APIs and Integrations
-Strengths: Broad coverage ensures interoperability; LTI for LMS is key for educational adoption.
-Suggestions:
+{
+  "consent_type": "analytics",
+  "granted": true
+}
+```
 
-Add IPFS for decentralized storage of open-access docs, enhancing resilience.
-Monitor API health with tools like Sentry for uptime.
+Consent types: `essential`, `analytics`, `personalization`, `marketing`, `research`
 
-7. Security & Privacy
-Strengths: AES-256/TLS 1.3 is standard; differential privacy is proactive.
-Suggestions:
+#### Export User Data
+```http
+GET /api/v1/ethics/privacy/export
+Authorization: Bearer <token>
+```
 
-Implement zero-knowledge proofs for provenance verification without revealing full data.
-Conduct regular pentests via tools like OWASP ZAP.
+#### Get Ethics Dashboard
+```http
+GET /api/v1/ethics/analytics/dashboard?period_days=30
+Authorization: Bearer <token>
+```
 
-8. Development Environment
-Strengths: Modern stack with CI/CD supports rapid iteration.
-Suggestions:
+### Health Check
 
-Add MLflow for experiment tracking in AI components.
-Use Vercel for frontend deployment to leverage edge functions.
+```http
+GET /api/v1/health
+```
 
-9. Roadmap Summary
-Strengths: Phased approach minimizes risk; v1.0 beta invites real-world feedback.
-Suggestions:
+## Frontend Development
 
-Include alpha testing with educators pre-v0.5.
-Post-beta: Add mobile app (React Native) for on-the-go learning.
+### Project Structure
+
+```
+frontend/
+├── src/
+│   ├── app/              # Next.js App Router pages
+│   ├── components/       # React components
+│   │   ├── ui/          # Shared UI components
+│   │   ├── graph/       # Knowledge graph components
+│   │   ├── learning/    # Flashcard/learning components
+│   │   └── ethics/      # Ethics dashboard components
+│   ├── hooks/           # Custom React hooks
+│   ├── lib/             # Utilities and helpers
+│   └── stores/          # Zustand state management
+├── e2e/                 # Playwright E2E tests
+└── public/              # Static assets
+```
+
+### Available Scripts
+
+```bash
+# Development
+npm run dev          # Start development server
+npm run build        # Build for production
+npm run start        # Start production server
+
+# Linting & Type Checking
+npm run lint         # Run ESLint
+npm run type-check   # Run TypeScript compiler
+
+# Testing
+npm run test:e2e           # Run Playwright tests
+npm run test:e2e:ui        # Run with Playwright UI
+npm run test:e2e:headed    # Run in headed browser
+npm run test:e2e:report    # Show test report
+```
+
+## Testing
+
+### Backend Tests
+
+```bash
+cd backend
+
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run specific test categories
+pytest tests/unit/                    # Unit tests
+pytest tests/integration/             # Integration tests
+
+# Run specific test file
+pytest tests/integration/test_document_flow.py
+```
+
+### Frontend E2E Tests
+
+```bash
+cd frontend
+
+# Install Playwright browsers
+npx playwright install
+
+# Run all E2E tests
+npm run test:e2e
+
+# Run specific test file
+npx playwright test e2e/auth.spec.ts
+
+# Run in headed mode for debugging
+npm run test:e2e:headed
+
+# Open Playwright UI
+npm run test:e2e:ui
+```
+
+### Test Coverage
+
+The test suite includes:
+
+**Backend Integration Tests:**
+- Document upload and processing flow
+- Knowledge graph operations
+- Flashcard generation and SM2 scheduling
+- Scholar mode citation trees
+- Ethics provenance and bias auditing
+- Privacy compliance (GDPR)
+
+**Frontend E2E Tests:**
+- Navigation and routing
+- Authentication flow
+- Document management
+- Accessibility checks
+- Responsive design
+- Performance benchmarks
+
+## Deployment
+
+### Docker Compose (Recommended)
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - POSTGRES_HOST=db
+      - NEO4J_URI=bolt://neo4j:7687
+    depends_on:
+      - db
+      - neo4j
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=unfold
+      - POSTGRES_USER=unfold
+      - POSTGRES_PASSWORD=changeme
+
+  neo4j:
+    image: neo4j:5
+    volumes:
+      - neo4j_data:/data
+    environment:
+      - NEO4J_AUTH=neo4j/changeme
+
+volumes:
+  postgres_data:
+  neo4j_data:
+```
+
+### Production Considerations
+
+1. **Security**
+   - Use strong, unique passwords for all services
+   - Enable HTTPS with valid SSL certificates
+   - Configure CORS appropriately
+   - Use environment variables for secrets
+
+2. **Performance**
+   - Enable Redis caching for API responses
+   - Configure connection pooling for databases
+   - Use CDN for static frontend assets
+   - Enable gzip compression
+
+3. **Monitoring**
+   - Set up health checks
+   - Configure logging (structured JSON)
+   - Use APM tools (Datadog, New Relic)
+   - Set up alerts for errors
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the AGPL v3 License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [FastAPI](https://fastapi.tiangolo.com/)
+- Frontend powered by [Next.js](https://nextjs.org/)
+- Knowledge graphs with [Neo4j](https://neo4j.com/)
+- Vector search with [FAISS](https://github.com/facebookresearch/faiss)
+- Spaced repetition based on [SM2 algorithm](https://www.supermemo.com/en/archives1990-2015/english/ol/sm2)
