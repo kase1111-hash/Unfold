@@ -1,0 +1,223 @@
+{
+  "mode": "pattern-based",
+  "total_relations": 21,
+  "expected": 13,
+  "recall": 61.53846153846154,
+  "relations": [
+    {
+      "subject": "Vaswani et al.",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "Vaswani et al.",
+      "predicate": "introduces",
+      "object": "Transformer",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.75,
+      "dependency_path": [
+        "passive_pattern"
+      ]
+    },
+    {
+      "subject": "Vaswani et al.",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.75,
+      "dependency_path": [
+        "passive_pattern"
+      ]
+    },
+    {
+      "subject": "Transformer",
+      "predicate": "uses",
+      "object": "self-attention",
+      "relation_type": "USES",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "Google",
+      "predicate": "introduced",
+      "object": "BERT",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.8,
+      "dependency_path": [
+        "nsubj",
+        "dobj"
+      ]
+    },
+    {
+      "subject": "Google",
+      "predicate": "introduces",
+      "object": "BERT",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "Devlin et al.",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "Devlin et al.",
+      "predicate": "introduces",
+      "object": "BERT",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.75,
+      "dependency_path": [
+        "author_pattern"
+      ]
+    },
+    {
+      "subject": "Devlin et al.",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.75,
+      "dependency_path": [
+        "author_pattern"
+      ]
+    },
+    {
+      "subject": "BERT",
+      "predicate": "uses",
+      "object": "masked language modeling",
+      "relation_type": "USES",
+      "confidence": 0.8,
+      "dependency_path": [
+        "nsubj",
+        "dobj"
+      ]
+    },
+    {
+      "subject": "BERT",
+      "predicate": "uses",
+      "object": "masked language modeling",
+      "relation_type": "USES",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "OpenAI",
+      "predicate": "developed",
+      "object": "GPT",
+      "relation_type": "DEVELOPS",
+      "confidence": 0.8,
+      "dependency_path": [
+        "nsubj",
+        "dobj"
+      ]
+    },
+    {
+      "subject": "OpenAI",
+      "predicate": "develops",
+      "object": "GPT",
+      "relation_type": "DEVELOPS",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "Google Research",
+      "predicate": "introduced",
+      "object": "Vision Transformer",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.8,
+      "dependency_path": [
+        "nsubj",
+        "dobj"
+      ]
+    },
+    {
+      "subject": "Google Research",
+      "predicate": "introduces",
+      "object": "Transformer",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "introduces",
+      "object": "Transformer",
+      "relation_type": "INTRODUCES",
+      "confidence": 0.75,
+      "dependency_path": [
+        "author_pattern"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "affiliated_with",
+      "object": "Google",
+      "relation_type": "AFFILIATED_WITH",
+      "confidence": 0.75,
+      "dependency_path": [
+        "author_pattern"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "rivals",
+      "object": "CNNs",
+      "relation_type": "COMPETES_WITH",
+      "confidence": 0.8,
+      "dependency_path": [
+        "nsubj",
+        "dobj"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "competes_with",
+      "object": "CNNs",
+      "relation_type": "COMPETES_WITH",
+      "confidence": 0.7,
+      "dependency_path": [
+        "pattern"
+      ]
+    },
+    {
+      "subject": "ViT",
+      "predicate": "evaluated_on",
+      "object": "ImageNet",
+      "relation_type": "EVALUATED_ON",
+      "confidence": 0.7,
+      "dependency_path": [
+        "bench_pattern"
+      ]
+    }
+  ]
+}

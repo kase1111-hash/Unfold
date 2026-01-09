@@ -1,0 +1,34 @@
+{
+  "total_resolutions": 7,
+  "recall": 80.0,
+  "resolutions": [
+    {
+      "reference": "the Transformer",
+      "antecedent": "Transformer"
+    },
+    {
+      "reference": "It",
+      "antecedent": "RNNs"
+    },
+    {
+      "reference": "The model",
+      "antecedent": "BERT"
+    },
+    {
+      "reference": "the GPT",
+      "antecedent": "OpenAI"
+    },
+    {
+      "reference": "It",
+      "antecedent": "GPT-3"
+    },
+    {
+      "reference": "This approach",
+      "antecedent": "Vision Transformer"
+    },
+    {
+      "reference": "the Transformer",
+      "antecedent": "Transformer"
+    }
+  ]
+}
