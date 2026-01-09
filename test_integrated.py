@@ -14,9 +14,91 @@ import sys
 import json
 import re
 from pathlib import Path
-from typing import List, Dict, Set, Tuple
+from typing import List, Dict, Set, Tuple, Optional
 from dataclasses import dataclass, field
 from collections import defaultdict
+
+
+# ============================================================================
+# Multi-word Entity Matching Helper
+# ============================================================================
+
+def match_entity(text: str, entity_texts: Dict[str, Dict], prefer_longer: bool = True) -> Optional[str]:
+    """
+    Match text to an entity, preferring longer matches.
+
+    Args:
+        text: The text to match (e.g., "google brain")
+        entity_texts: Dict mapping lowercase entity text to entity dict
+        prefer_longer: If True, prefer longer entity matches
+
+    Returns:
+        The matched entity key (lowercase) or None
+    """
+    text_lower = text.lower().strip()
+
+    # First, try exact match
+    if text_lower in entity_texts:
+        return text_lower
+
+    # Collect all partial matches
+    matches = []
+    for ent_key in entity_texts:
+        # Check if text contains entity or entity contains text
+        if text_lower in ent_key or ent_key in text_lower:
+            matches.append(ent_key)
+
+    if not matches:
+        return None
+
+    if prefer_longer:
+        # Sort by length descending, return longest match
+        matches.sort(key=len, reverse=True)
+
+    return matches[0]
+
+
+def match_entities_in_text(text: str, entities: List[Dict]) -> List[str]:
+    """
+    Find all entities mentioned in text, preferring longer matches.
+
+    Returns list of matched entity texts (original case).
+    """
+    text_lower = text.lower()
+
+    # Sort entities by length (longest first) to prefer longer matches
+    sorted_ents = sorted(entities, key=lambda e: len(e['text']), reverse=True)
+
+    matched = []
+    matched_spans = []  # Track matched character spans to avoid overlaps
+
+    for ent in sorted_ents:
+        ent_lower = ent['text'].lower()
+
+        # Find all occurrences
+        start = 0
+        while True:
+            pos = text_lower.find(ent_lower, start)
+            if pos == -1:
+                break
+
+            end = pos + len(ent_lower)
+
+            # Check if this span overlaps with already matched spans
+            overlaps = False
+            for (ms, me) in matched_spans:
+                if not (end <= ms or pos >= me):  # Overlaps
+                    overlaps = True
+                    break
+
+            if not overlaps:
+                if ent['text'] not in matched:
+                    matched.append(ent['text'])
+                matched_spans.append((pos, end))
+
+            start = pos + 1
+
+    return matched
 
 # ============================================================================
 # Test Document (same as E2E test)
@@ -185,7 +267,7 @@ class EnhancedExtractor:
         return relations
 
     def _pattern_extract(self, text: str, entities: List[Dict]) -> List[Relation]:
-        """Pattern-based relation extraction."""
+        """Pattern-based relation extraction with multi-word entity support."""
         relations = []
         entity_texts = {e['text'].lower(): e for e in entities}
         text_lower = text.lower()
@@ -198,14 +280,10 @@ class EnhancedExtractor:
         ]
 
         for pattern, rel_type in simple_patterns:
-            for match in re.finditer(pattern, text_lower):
-                s, o = match.group(1), match.group(2)
-                sm = om = None
-                for e in entity_texts:
-                    if s in e or e in s:
-                        sm = e
-                    if o in e or e in o:
-                        om = e
+            for m in re.finditer(pattern, text_lower):
+                s, o = m.group(1), m.group(2)
+                sm = match_entity(s, entity_texts)
+                om = match_entity(o, entity_texts)
                 if sm and om and sm != om:
                     relations.append(Relation(
                         subject=entity_texts[sm]['text'],
@@ -215,20 +293,15 @@ class EnhancedExtractor:
                         source="pattern"
                     ))
 
-        # Special pattern: "X at Y introduced Z" - handles et al.
+        # Special pattern: "X at Y introduced Z" - handles et al. and multi-word orgs
         author_intro = r'(\w+(?:\s+et\s+al\.)?)\s+at\s+(\w+(?:\s+\w+)?)\s+introduced\s+(?:the\s+)?(\w+(?:\s+\w+)?)'
-        for match in re.finditer(author_intro, text_lower):
-            author, org, tech = match.group(1), match.group(2), match.group(3)
-            am = om = tm = None
-            for e in entity_texts:
-                if author in e or e in author:
-                    am = e
-                if org in e or e in org:
-                    om = e
-                if tech in e or e in tech:
-                    tm = e
+        for m in re.finditer(author_intro, text_lower):
+            author, org, tech = m.group(1), m.group(2), m.group(3)
+            am = match_entity(author, entity_texts)
+            om = match_entity(org, entity_texts)  # Prefers "Google Brain" over "Google"
+            tm = match_entity(tech, entity_texts)
 
-            if am and tm:
+            if am and tm and am != tm:
                 relations.append(Relation(
                     subject=entity_texts[am]['text'],
                     relation_type='INTRODUCES',
@@ -236,7 +309,7 @@ class EnhancedExtractor:
                     confidence=0.8,
                     source="pattern"
                 ))
-            if am and om:
+            if am and om and am != om:
                 relations.append(Relation(
                     subject=entity_texts[am]['text'],
                     relation_type='AFFILIATED_WITH',
@@ -247,18 +320,13 @@ class EnhancedExtractor:
 
         # Passive pattern: "X, introduced by Y at Z"
         passive_intro = r'(\w+(?:\s+\w+)?),?\s+introduced\s+by\s+(\w+(?:\s+et\s+al\.)?)\s+at\s+(\w+(?:\s+\w+)?)'
-        for match in re.finditer(passive_intro, text_lower):
-            tech, author, org = match.group(1), match.group(2), match.group(3)
-            am = om = tm = None
-            for e in entity_texts:
-                if author in e or e in author:
-                    am = e
-                if org in e or e in org:
-                    om = e
-                if tech in e or e in tech:
-                    tm = e
+        for m in re.finditer(passive_intro, text_lower):
+            tech, author, org = m.group(1), m.group(2), m.group(3)
+            am = match_entity(author, entity_texts)
+            om = match_entity(org, entity_texts)
+            tm = match_entity(tech, entity_texts)
 
-            if am and tm:
+            if am and tm and am != tm:
                 relations.append(Relation(
                     subject=entity_texts[am]['text'],
                     relation_type='INTRODUCES',
@@ -277,14 +345,10 @@ class EnhancedExtractor:
 
         # OpenAI developed X
         dev_pattern = r'(\w+)\s+developed\s+(?:the\s+)?(\w+)'
-        for match in re.finditer(dev_pattern, text_lower):
-            s, o = match.group(1), match.group(2)
-            sm = om = None
-            for e in entity_texts:
-                if s in e or e in s:
-                    sm = e
-                if o in e or e in o:
-                    om = e
+        for m in re.finditer(dev_pattern, text_lower):
+            s, o = m.group(1), m.group(2)
+            sm = match_entity(s, entity_texts)
+            om = match_entity(o, entity_texts)
             if sm and om and sm != om:
                 relations.append(Relation(
                     subject=entity_texts[sm]['text'],
@@ -296,21 +360,16 @@ class EnhancedExtractor:
 
         # Evaluation patterns: "results on X and Y" or "on X benchmarks"
         eval_pattern = r'results\s+on\s+(\w+)(?:\s+and\s+(\w+))?'
-        for match in re.finditer(eval_pattern, text_lower):
-            d1 = match.group(1)
-            d2 = match.group(2) if match.lastindex > 1 else None
+        for m in re.finditer(eval_pattern, text_lower):
+            d1 = m.group(1)
+            d2 = m.group(2) if m.lastindex > 1 else None
 
             # Find subject (technology mentioned nearby)
             for e in entity_texts:
                 if entity_texts[e].get('type') == 'TECHNOLOGY':
-                    # Check if this tech is mentioned in same sentence
                     for d in [d1, d2]:
                         if d:
-                            dm = None
-                            for de in entity_texts:
-                                if d in de or de in d:
-                                    dm = de
-                                    break
+                            dm = match_entity(d, entity_texts)
                             if dm:
                                 relations.append(Relation(
                                     subject=entity_texts[e]['text'],

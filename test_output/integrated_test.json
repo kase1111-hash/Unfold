@@ -5,9 +5,9 @@
     "meaningful": 0
   },
   "enhanced": {
-    "recall": 75.0,
-    "total": 52,
-    "meaningful": 32
+    "recall": 100.0,
+    "total": 53,
+    "meaningful": 31
   },
-  "improvement": 18.75
+  "improvement": 43.75
 }
