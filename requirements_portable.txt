@@ -30,7 +30,7 @@ typing_extensions>=4.0.0
 annotated-types>=0.6.0
 
 # Build Tools
-pyinstaller==6.3.0
+pyinstaller>=6.15.0
 
 # Note: Heavy dependencies (spacy, langchain, neo4j) are excluded
 # to keep the executable size reasonable. The portable build uses
