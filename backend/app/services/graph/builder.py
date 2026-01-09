@@ -1,5 +1,14 @@
-"""Knowledge graph builder service."""
+"""Knowledge graph builder service.
 
+Builds knowledge graphs from text using:
+1. Entity extraction (spaCy NER + noun chunks)
+2. Integrated relation extraction (coreference, dependency, LLM, patterns)
+
+The integrated pipeline uses Ollama as the default LLM provider for local/offline
+operation, with fallback to cloud APIs when configured.
+"""
+
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -24,6 +33,8 @@ from app.models.graph import (
 from app.services.graph.extractor import ExtractedEntity, get_entity_extractor
 from app.services.graph.relations import ExtractedRelation, get_relation_extractor
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class GraphBuildResult:
@@ -39,15 +50,28 @@ class GraphBuildResult:
 class KnowledgeGraphBuilder:
     """Build and manage knowledge graphs from documents."""
 
-    def __init__(self, use_llm_relations: bool = True):
+    def __init__(
+        self,
+        use_llm_relations: bool = True,
+        use_integrated: bool = True,
+        llm_provider: str = "ollama",
+    ):
         """Initialize knowledge graph builder.
 
         Args:
             use_llm_relations: Whether to use LLM for relation extraction
+            use_integrated: Whether to use integrated pipeline (recommended)
+            llm_provider: LLM provider for integrated pipeline ("ollama", "openai", etc.)
         """
         self.entity_extractor = get_entity_extractor()
-        self.relation_extractor = get_relation_extractor(use_llm=use_llm_relations)
+        self.relation_extractor = get_relation_extractor(
+            use_llm=use_llm_relations,
+            use_integrated=use_integrated,
+            llm_provider=llm_provider,
+        )
         self.use_llm_relations = use_llm_relations
+        self.use_integrated = use_integrated
+        logger.info(f"[KnowledgeGraphBuilder] Initialized with integrated={use_integrated}, llm_provider={llm_provider}")
 
     async def build_from_text(
         self,
@@ -120,12 +144,17 @@ class KnowledgeGraphBuilder:
         # Step 3: Extract and create relations
         if extract_relations and len(entities) >= 2:
             try:
-                if self.use_llm_relations:
+                # Integrated pipeline uses synchronous extraction
+                if self.use_integrated:
+                    relations = self.relation_extractor.extract_relations(text, entities)
+                elif self.use_llm_relations:
                     relations = await self.relation_extractor.extract_relations(
                         text, entities
                     )
                 else:
                     relations = self.relation_extractor.extract_relations(text, entities)
+
+                logger.info(f"Extracted {len(relations)} relations from text")
 
                 async with get_neo4j_session_context() as session:
                     for relation in relations:
@@ -134,16 +163,37 @@ class KnowledgeGraphBuilder:
                             target_id = entity_to_node_id.get(relation.target_text.lower())
 
                             if not source_id or not target_id:
+                                # Try partial matching for multi-word entities
+                                if not source_id:
+                                    for key in entity_to_node_id:
+                                        if relation.source_text.lower() in key or key in relation.source_text.lower():
+                                            source_id = entity_to_node_id[key]
+                                            break
+                                if not target_id:
+                                    for key in entity_to_node_id:
+                                        if relation.target_text.lower() in key or key in relation.target_text.lower():
+                                            target_id = entity_to_node_id[key]
+                                            break
+
+                            if not source_id or not target_id:
                                 continue
+
+                            # Handle relation_type as either enum or string
+                            rel_type_value = (
+                                relation.relation_type.value
+                                if hasattr(relation.relation_type, 'value')
+                                else str(relation.relation_type)
+                            )
 
                             rel_data = await create_relationship(
                                 session,
                                 source_id=source_id,
                                 target_id=target_id,
-                                rel_type=relation.relation_type.value,
+                                rel_type=rel_type_value,
                                 properties={
                                     "confidence": relation.confidence,
-                                    "context": relation.context,
+                                    "context": relation.context or "",
+                                    "extraction_method": getattr(relation, 'extraction_method', 'unknown'),
                                     "created_at": datetime.now(timezone.utc).isoformat(),
                                 },
                             )
@@ -157,6 +207,7 @@ class KnowledgeGraphBuilder:
                             )
 
             except Exception as e:
+                logger.error(f"Relation extraction failed: {e}")
                 result.errors.append(f"Relation extraction failed: {e}")
 
         return result
@@ -417,16 +468,32 @@ class KnowledgeGraphBuilder:
 _builder: KnowledgeGraphBuilder | None = None
 
 
-def get_graph_builder(use_llm: bool = True) -> KnowledgeGraphBuilder:
+def get_graph_builder(
+    use_llm: bool = True,
+    use_integrated: bool = True,
+    llm_provider: str = "ollama",
+) -> KnowledgeGraphBuilder:
     """Get or create knowledge graph builder instance.
 
     Args:
         use_llm: Whether to use LLM for relation extraction
+        use_integrated: Whether to use integrated pipeline (recommended)
+        llm_provider: LLM provider for integrated pipeline ("ollama", "openai", etc.)
 
     Returns:
         KnowledgeGraphBuilder instance
     """
     global _builder
     if _builder is None:
-        _builder = KnowledgeGraphBuilder(use_llm_relations=use_llm)
+        _builder = KnowledgeGraphBuilder(
+            use_llm_relations=use_llm,
+            use_integrated=use_integrated,
+            llm_provider=llm_provider,
+        )
     return _builder
+
+
+def reset_builder():
+    """Reset the global builder instance."""
+    global _builder
+    _builder = None
