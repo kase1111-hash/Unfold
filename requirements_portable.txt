@@ -1,52 +1,37 @@
-# Unfold Portable - Full Featured Build
-# All dependencies for complete functionality
+# Unfold Portable - Dependencies for PyInstaller Build
+# These packages are bundled into the portable executable
 
-# Web Framework
+# Web Framework (core)
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
 python-multipart==0.0.9
+starlette>=0.36.0
 
-# Data Validation
+# Data Validation (required)
 pydantic==2.6.1
 pydantic-settings==2.1.0
 email-validator==2.1.0.post1
 
-# Database - PostgreSQL
-asyncpg==0.29.0
+# Database (SQLite + SQLAlchemy for local storage)
 sqlalchemy[asyncio]==2.0.25
 
-# Database - Neo4j (optional at runtime)
-neo4j==5.17.0
-
-# Vector Store
-faiss-cpu==1.7.4
-
-# AI/ML
-openai==1.12.0
-anthropic==0.18.1
-langchain==0.1.7
-langchain-openai==0.0.6
-langchain-community==0.0.20
-
-# NLP
-spacy==3.7.4
-
-# Document Processing
-pypdf2==3.0.1
-python-docx==1.1.0
-ebooklib==0.18
-
-# HTTP Client
+# HTTP Client (for Ollama API)
 httpx==0.26.0
-aiohttp==3.9.3
 
-# Authentication
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-
-# Utilities
-python-dotenv==1.0.1
+# JSON (fast serialization)
 orjson>=3.9.0
+
+# Async support
+anyio>=4.0.0
+sniffio>=1.3.0
+
+# Type hints
+typing_extensions>=4.0.0
+annotated-types>=0.6.0
 
 # Build Tools
 pyinstaller==6.3.0
+
+# Note: Heavy dependencies (spacy, langchain, neo4j) are excluded
+# to keep the executable size reasonable. The portable build uses
+# Ollama for LLM-powered extraction instead.
