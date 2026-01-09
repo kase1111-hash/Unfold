@@ -7,6 +7,7 @@ This module provides a unified interface for all database connections:
 """
 
 from app.db.neo4j import (
+    NEO4J_AVAILABLE,
     check_neo4j_connection,
     close_neo4j,
     create_indexes as create_neo4j_indexes,
@@ -71,6 +72,7 @@ __all__ = [
     "create_tables",
     "drop_tables",
     # Neo4j
+    "NEO4J_AVAILABLE",
     "init_neo4j",
     "close_neo4j",
     "get_neo4j_session",

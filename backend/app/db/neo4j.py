@@ -4,8 +4,18 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-from neo4j.exceptions import ServiceUnavailable, AuthError
+# Neo4j is optional - allows portable builds without graph database
+try:
+    from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
+    from neo4j.exceptions import ServiceUnavailable, AuthError
+    NEO4J_AVAILABLE = True
+except ImportError:
+    AsyncGraphDatabase = None  # type: ignore
+    AsyncDriver = None  # type: ignore
+    AsyncSession = None  # type: ignore
+    ServiceUnavailable = Exception  # type: ignore
+    AuthError = Exception  # type: ignore
+    NEO4J_AVAILABLE = False
 
 from app.config import get_settings
 
@@ -15,13 +25,16 @@ settings = get_settings()
 _driver: AsyncDriver | None = None
 
 
-async def init_neo4j() -> AsyncDriver:
+async def init_neo4j() -> "AsyncDriver | None":
     """Initialize Neo4j connection.
 
     Returns:
-        Configured async driver instance.
+        Configured async driver instance, or None if neo4j not available.
     """
     global _driver
+
+    if not NEO4J_AVAILABLE:
+        return None
 
     if _driver is not None:
         return _driver
@@ -46,29 +59,46 @@ async def close_neo4j() -> None:
         _driver = None
 
 
-async def get_neo4j_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_neo4j_session() -> AsyncGenerator["AsyncSession | None", None]:
     """Get Neo4j session for dependency injection.
 
     Yields:
-        AsyncSession instance that auto-closes after use.
+        AsyncSession instance that auto-closes after use, or None if neo4j not available.
     """
+    if not NEO4J_AVAILABLE:
+        yield None
+        return
+
     if _driver is None:
         await init_neo4j()
+
+    if _driver is None:
+        yield None
+        return
 
     async with _driver.session() as session:
         yield session
 
 
 @asynccontextmanager
-async def get_neo4j_session_context() -> AsyncGenerator[AsyncSession, None]:
+async def get_neo4j_session_context() -> AsyncGenerator["AsyncSession | None", None]:
     """Get Neo4j session as context manager.
 
     Usage:
         async with get_neo4j_session_context() as session:
-            result = await session.run(query)
+            if session:
+                result = await session.run(query)
     """
+    if not NEO4J_AVAILABLE:
+        yield None
+        return
+
     if _driver is None:
         await init_neo4j()
+
+    if _driver is None:
+        yield None
+        return
 
     async with _driver.session() as session:
         yield session
@@ -80,6 +110,13 @@ async def check_neo4j_connection() -> dict[str, str | bool]:
     Returns:
         Dict with connection status and details.
     """
+    if not NEO4J_AVAILABLE:
+        return {
+            "connected": False,
+            "status": "not_installed",
+            "message": "Neo4j module not installed (optional for portable builds)",
+        }
+
     try:
         if _driver is None:
             return {
@@ -123,10 +160,10 @@ async def check_neo4j_connection() -> dict[str, str | bool]:
 
 
 async def create_node(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     node_type: str,
     properties: dict[str, Any],
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Create a node in the knowledge graph.
 
     Args:
@@ -135,8 +172,11 @@ async def create_node(
         properties: Node properties
 
     Returns:
-        Created node data
+        Created node data, or None if neo4j not available
     """
+    if session is None:
+        return None
+
     query = f"""
     CREATE (n:{node_type} $props)
     RETURN n, elementId(n) as id
@@ -147,12 +187,12 @@ async def create_node(
 
 
 async def create_relationship(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     source_id: str,
     target_id: str,
     rel_type: str,
     properties: dict[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """Create a relationship between two nodes.
 
     Args:
@@ -163,8 +203,11 @@ async def create_relationship(
         properties: Optional relationship properties
 
     Returns:
-        Created relationship data
+        Created relationship data, or None if neo4j not available
     """
+    if session is None:
+        return None
+
     props = properties or {}
     query = f"""
     MATCH (a), (b)
@@ -180,7 +223,7 @@ async def create_relationship(
 
 
 async def get_node_by_id(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     node_id: str,
 ) -> dict[str, Any] | None:
     """Get a node by its element ID.
@@ -190,8 +233,11 @@ async def get_node_by_id(
         node_id: Node element ID
 
     Returns:
-        Node data or None if not found
+        Node data or None if not found or neo4j not available
     """
+    if session is None:
+        return None
+
     query = """
     MATCH (n)
     WHERE elementId(n) = $node_id
@@ -209,7 +255,7 @@ async def get_node_by_id(
 
 
 async def search_nodes(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     label: str | None = None,
     properties: dict[str, Any] | None = None,
     limit: int = 50,
@@ -223,8 +269,11 @@ async def search_nodes(
         limit: Maximum results
 
     Returns:
-        List of matching nodes
+        List of matching nodes, or empty list if neo4j not available
     """
+    if session is None:
+        return []
+
     label_clause = f":{label}" if label else ""
     where_clauses = []
     params = {"limit": limit}
@@ -256,7 +305,7 @@ async def search_nodes(
 
 
 async def traverse_graph(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     start_node_id: str,
     relationship_types: list[str] | None = None,
     direction: str = "OUTGOING",
@@ -274,8 +323,11 @@ async def traverse_graph(
         limit: Maximum results
 
     Returns:
-        List of paths/nodes found
+        List of paths/nodes found, or empty list if neo4j not available
     """
+    if session is None:
+        return []
+
     rel_filter = "|".join(relationship_types) if relationship_types else ""
     rel_pattern = f"[r:{rel_filter}*1..{max_depth}]" if rel_filter else f"[r*1..{max_depth}]"
 
@@ -305,7 +357,7 @@ async def traverse_graph(
 
 
 async def delete_node(
-    session: AsyncSession,
+    session: "AsyncSession | None",
     node_id: str,
     detach: bool = True,
 ) -> bool:
@@ -317,8 +369,11 @@ async def delete_node(
         detach: If True, also delete relationships
 
     Returns:
-        True if deleted, False if not found
+        True if deleted, False if not found or neo4j not available
     """
+    if session is None:
+        return False
+
     detach_clause = "DETACH " if detach else ""
     query = f"""
     MATCH (n)
@@ -333,8 +388,14 @@ async def delete_node(
 
 async def create_indexes() -> None:
     """Create necessary indexes for knowledge graph queries."""
+    if not NEO4J_AVAILABLE:
+        return
+
     if _driver is None:
         await init_neo4j()
+
+    if _driver is None:
+        return
 
     async with _driver.session() as session:
         # Create indexes for common node types
