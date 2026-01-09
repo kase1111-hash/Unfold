@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Unfold Portable Edition.
-Builds a standalone Windows executable for USB drive deployment.
+PyInstaller spec file for Unfold Portable Edition - Full Featured Build.
+Builds a standalone Windows executable with all dependencies.
 
 Usage:
     pyinstaller unfold.spec
@@ -17,26 +17,14 @@ from pathlib import Path
 BASE_DIR = Path(SPECPATH)
 BACKEND_DIR = BASE_DIR / 'backend'
 
-# Collect all backend Python files
-backend_datas = []
-for root, dirs, files in os.walk(BACKEND_DIR):
-    # Skip __pycache__, tests, and other unnecessary directories
-    dirs[:] = [d for d in dirs if d not in ['__pycache__', 'tests', '.pytest_cache', 'alembic']]
-
-    for file in files:
-        if file.endswith('.py'):
-            src = os.path.join(root, file)
-            # Compute relative destination path
-            rel_path = os.path.relpath(root, BASE_DIR)
-            backend_datas.append((src, rel_path))
-
 # Analysis configuration
 a = Analysis(
     ['unfold_portable.py'],
-    pathex=[],
+    pathex=[str(BACKEND_DIR)],
     binaries=[],
     datas=[
-        # No additional data files needed - portable mode uses Ollama directly
+        # Include backend source files
+        (str(BACKEND_DIR / 'app'), 'backend/app'),
     ],
     hiddenimports=[
         # FastAPI and web server
@@ -65,21 +53,81 @@ a = Analysis(
         'pydantic.deprecated.decorator',
         'pydantic_core',
 
-        # Database (SQLite only for portable)
+        # Database
         'sqlite3',
+        'asyncpg',
+        'sqlalchemy',
+        'sqlalchemy.ext.asyncio',
+        'sqlalchemy.dialects.postgresql',
+        'sqlalchemy.dialects.sqlite',
+
+        # Neo4j
+        'neo4j',
 
         # HTTP clients
         'httpx',
         'httpx._transports',
         'httpx._transports.default',
         'httpcore',
+        'aiohttp',
         'anyio',
         'anyio._backends',
         'anyio._backends._asyncio',
 
+        # AI/ML
+        'openai',
+        'anthropic',
+        'langchain',
+        'langchain.llms',
+        'langchain.chat_models',
+        'langchain_openai',
+        'langchain_community',
+
+        # NLP
+        'spacy',
+        'spacy.lang.en',
+        'spacy.pipeline',
+        'spacy.tokens',
+
+        # Document Processing
+        'pypdf2',
+        'docx',
+        'ebooklib',
+
         # JSON and serialization
         'json',
         'orjson',
+
+        # Graph services
+        'app.services.graph.coreference',
+        'app.services.graph.dependency_parsing',
+        'app.services.graph.llm_relations',
+        'app.services.graph.integrated_pipeline',
+        'app.services.graph.extractor',
+        'app.services.graph.builder',
+        'app.services.graph.relations',
+        'app.services.graph.spacy_loader',
+        'app.services.graph.enhanced_relations',
+
+        # Models
+        'app.models.graph',
+        'app.models.document',
+        'app.models.user',
+
+        # Config
+        'app.config',
+
+        # Database modules
+        'app.db',
+        'app.db.neo4j',
+        'app.db.postgres',
+        'app.db.vector',
+
+        # Authentication
+        'jose',
+        'passlib',
+        'passlib.hash',
+        'bcrypt',
 
         # Utilities
         're',
@@ -87,22 +135,12 @@ a = Analysis(
         'webbrowser',
         'argparse',
         'pathlib',
+        'dotenv',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude heavy ML/AI dependencies (not needed for Ollama-based extraction)
-        'torch',
-        'tensorflow',
-        'transformers',
-        'matplotlib',
-        'pandas',
-        'numpy',
-        'scipy',
-        'sklearn',
-        'spacy',
-
         # Exclude test frameworks
         'pytest',
         'pytest_asyncio',
@@ -113,32 +151,22 @@ a = Analysis(
         'ruff',
         'mypy',
 
-        # Exclude database drivers not used in portable mode
-        'neo4j',
-        'pinecone',
-        'asyncpg',
-        'sqlalchemy',
-        'alembic',
-        'redis',
+        # Exclude unused heavy dependencies
+        'torch',
+        'tensorflow',
+        'transformers',
+        'matplotlib',
+        'pandas',
+        'scipy',
+        'sklearn',
 
-        # Exclude cloud providers
+        # Exclude cloud-only services
+        'pinecone',
         'boto3',
         'botocore',
         'google',
         'azure',
-
-        # Exclude document processing (not needed for basic extraction)
-        'pypdf2',
-        'python-docx',
-        'ebooklib',
-        'pytesseract',
-
-        # Exclude other unnecessary packages
-        'langchain',
-        'langchain_openai',
-        'langchain_community',
-        'openai',
-        'anthropic',
+        'redis',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -177,16 +205,3 @@ exe = EXE(
     icon=None,  # Add icon path here if available: 'assets/icon.ico'
     version='version_info.txt',  # Add version info if available
 )
-
-# Optional: Create a directory bundle instead of single file
-# Useful for debugging or if single file mode has issues
-# coll = COLLECT(
-#     exe,
-#     a.binaries,
-#     a.zipfiles,
-#     a.datas,
-#     strip=False,
-#     upx=True,
-#     upx_exclude=[],
-#     name='Unfold',
-# )

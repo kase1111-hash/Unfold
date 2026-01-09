@@ -281,18 +281,23 @@ def run_standalone_extractor(config: dict):
 
 
 def extract_knowledge_graph(text: str) -> dict:
-    """Extract knowledge graph from text using available methods."""
-    # First try the full backend pipeline
+    """Extract knowledge graph from text using the full backend pipeline."""
     try:
-        sys.path.insert(0, str(BASE_DIR / "backend"))
+        # Add backend to path
+        backend_path = str(BASE_DIR / "backend")
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
 
         from app.services.graph.integrated_pipeline import IntegratedRelationExtractor
         from app.services.graph.extractor import extract_entities
 
         # Extract entities
+        print("  [Extraction] Extracting entities...")
         entities = extract_entities(text)
+        print(f"  [Extraction] Found {len(entities)} entities")
 
         # Extract relations
+        print("  [Extraction] Extracting relations...")
         extractor = IntegratedRelationExtractor(
             use_coreference=True,
             use_dependency=True,
@@ -300,6 +305,7 @@ def extract_knowledge_graph(text: str) -> dict:
             use_patterns=True,
         )
         relations = extractor.extract_relations(text, entities)
+        print(f"  [Extraction] Found {len(relations)} relations")
 
         return {
             "success": True,
@@ -318,97 +324,13 @@ def extract_knowledge_graph(text: str) -> dict:
                 for r in relations
             ],
         }
-    except ImportError as e:
-        # Backend dependencies not available, use Ollama-based fallback
-        print(f"  [Portable] Backend unavailable ({e}), using Ollama extraction...")
-        return extract_with_ollama(text)
     except Exception as e:
+        import traceback
+        print(f"  [Extraction] Error: {e}")
+        traceback.print_exc()
         return {
             "success": False,
             "error": str(e),
-            "entities": [],
-            "relations": [],
-        }
-
-
-def extract_with_ollama(text: str) -> dict:
-    """Fallback extraction using Ollama LLM directly."""
-    try:
-        import httpx
-
-        config = load_config()
-        ollama_url = config.get("ollama_host", "http://localhost:11434")
-        model = config.get("llm_model", "llama3.2")
-
-        prompt = f"""Extract entities and relationships from the following text.
-Return a JSON object with this exact structure:
-{{
-  "entities": [
-    {{"text": "entity name", "type": "PERSON|ORGANIZATION|CONCEPT|METHOD|DATASET|LOCATION|OTHER"}}
-  ],
-  "relations": [
-    {{"source": "entity1", "target": "entity2", "type": "RELATED_TO|USES|CREATES|PART_OF|AFFILIATED_WITH"}}
-  ]
-}}
-
-Text to analyze:
-{text[:3000]}
-
-Return ONLY valid JSON, no other text."""
-
-        response = httpx.post(
-            f"{ollama_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": prompt,
-                "stream": False,
-                "format": "json",
-            },
-            timeout=60.0,
-        )
-
-        if response.status_code == 200:
-            result = response.json()
-            llm_response = result.get("response", "{}")
-
-            # Parse the JSON response
-            try:
-                extracted = json.loads(llm_response)
-                entities = extracted.get("entities", [])
-                relations = extracted.get("relations", [])
-
-                return {
-                    "success": True,
-                    "entities": entities,
-                    "relations": [
-                        {
-                            "source": r.get("source", ""),
-                            "target": r.get("target", ""),
-                            "type": r.get("type", "RELATED_TO"),
-                            "confidence": 0.8,
-                            "method": "ollama",
-                        }
-                        for r in relations
-                    ],
-                }
-            except json.JSONDecodeError:
-                return {
-                    "success": False,
-                    "error": "Failed to parse LLM response as JSON",
-                    "entities": [],
-                    "relations": [],
-                }
-        else:
-            return {
-                "success": False,
-                "error": f"Ollama request failed: {response.status_code}",
-                "entities": [],
-                "relations": [],
-            }
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Ollama extraction failed: {str(e)}",
             "entities": [],
             "relations": [],
         }
