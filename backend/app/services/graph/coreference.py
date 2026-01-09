@@ -11,10 +11,19 @@ Supports multiple resolution strategies:
 2. LLM-based: Uses language model for complex cases
 """
 
+import logging
+import sys
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Set
 from enum import Enum
 import re
+
+logger = logging.getLogger(__name__)
+
+
+class CoreferenceError(Exception):
+    """Exception raised for coreference resolution errors."""
+    pass
 
 
 class ReferenceType(Enum):
@@ -109,17 +118,39 @@ class CoreferenceResolver:
     Falls back to LLM for complex cases when available.
     """
 
-    def __init__(self, use_llm: bool = False, llm_provider=None):
+    def __init__(self, use_llm: bool = False, llm_provider=None, verbose: bool = True):
         """
         Initialize the resolver.
 
         Args:
             use_llm: Whether to use LLM for complex resolution
             llm_provider: Optional LLM provider for complex cases
+            verbose: Whether to print progress messages
         """
         self.use_llm = use_llm
         self.llm_provider = llm_provider
-        print(f"  [CoreferenceResolver] Initialized (LLM: {use_llm})")
+        self.verbose = verbose
+        self._log(f"Initialized (LLM: {use_llm})")
+
+    def _log(self, message: str, level: str = "info"):
+        """Log a message with appropriate formatting."""
+        prefix = "[CoreferenceResolver]"
+        if level == "error":
+            logger.error(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✗ ERROR: {message}", file=sys.stderr)
+        elif level == "warning":
+            logger.warning(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ⚠ {message}")
+        elif level == "success":
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✓ {message}")
+        else:
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} {message}")
 
     def find_references(self, text: str) -> List[Reference]:
         """Find all referring expressions in text."""
@@ -204,26 +235,77 @@ class CoreferenceResolver:
 
         Returns:
             ResolvedText with original and resolved versions
+
+        Raises:
+            CoreferenceError: If resolution fails critically
         """
-        references = self.find_references(text)
-        entity_objs = self.find_entities(text, entities)
+        self._log("Starting coreference resolution...")
 
-        if not references:
-            return ResolvedText(text, text, [])
+        try:
+            # Validate inputs
+            if not text or not text.strip():
+                self._log("Empty text provided, skipping resolution", "warning")
+                return ResolvedText("", "", [])
 
-        resolutions = []
+            if not entities:
+                self._log("No entities provided, skipping resolution", "warning")
+                return ResolvedText(text, text, [])
 
-        for ref in references:
-            antecedent = self._find_antecedent(ref, entity_objs, resolutions)
-            if antecedent:
-                ref.resolved_to = antecedent.text
-                ref.confidence = self._calculate_confidence(ref, antecedent)
-                resolutions.append((ref.text, antecedent.text))
+            # Find references
+            try:
+                references = self.find_references(text)
+                self._log(f"Found {len(references)} references to resolve")
+            except Exception as e:
+                self._log(f"Failed to find references: {e}", "error")
+                raise CoreferenceError(f"Reference finding failed: {e}") from e
 
-        # Build resolved text
-        resolved_text = self._build_resolved_text(text, references)
+            # Find entity positions
+            try:
+                entity_objs = self.find_entities(text, entities)
+                self._log(f"Mapped {len(entity_objs)} entity occurrences")
+            except Exception as e:
+                self._log(f"Failed to map entities: {e}", "error")
+                raise CoreferenceError(f"Entity mapping failed: {e}") from e
 
-        return ResolvedText(text, resolved_text, resolutions)
+            if not references:
+                self._log("No references found, nothing to resolve", "success")
+                return ResolvedText(text, text, [])
+
+            # Resolve references
+            resolutions = []
+            resolved_count = 0
+            failed_count = 0
+
+            for ref in references:
+                try:
+                    antecedent = self._find_antecedent(ref, entity_objs, resolutions)
+                    if antecedent:
+                        ref.resolved_to = antecedent.text
+                        ref.confidence = self._calculate_confidence(ref, antecedent)
+                        resolutions.append((ref.text, antecedent.text))
+                        resolved_count += 1
+                    else:
+                        failed_count += 1
+                except Exception as e:
+                    self._log(f"Failed to resolve '{ref.text}': {e}", "warning")
+                    failed_count += 1
+
+            # Build resolved text
+            try:
+                resolved_text = self._build_resolved_text(text, references)
+            except Exception as e:
+                self._log(f"Failed to build resolved text: {e}", "error")
+                resolved_text = text
+
+            # Report completion
+            self._log(f"Completed: {resolved_count} resolved, {failed_count} unresolved", "success")
+            return ResolvedText(text, resolved_text, resolutions)
+
+        except CoreferenceError:
+            raise
+        except Exception as e:
+            self._log(f"Unexpected error during resolution: {e}", "error")
+            raise CoreferenceError(f"Resolution failed: {e}") from e
 
     def _find_antecedent(
         self,

@@ -29,6 +29,7 @@ Setup for llama.cpp (fully offline):
 """
 
 import os
+import sys
 import json
 import hashlib
 import logging
@@ -38,6 +39,11 @@ from enum import Enum
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
+
+
+class LLMExtractionError(Exception):
+    """Exception raised for LLM extraction errors."""
+    pass
 
 
 class RelationType(str, Enum):
@@ -789,10 +795,12 @@ class LLMRelationExtractor:
         llama_model_path: Optional[str] = None,
         preferred_provider: str = "ollama",  # Default to Ollama
         enable_cache: bool = True,
-        min_confidence: float = 0.5
+        min_confidence: float = 0.5,
+        verbose: bool = True
     ):
         self.min_confidence = min_confidence
         self.cache = RelationCache() if enable_cache else None
+        self.verbose = verbose
 
         # Initialize providers in priority order
         self.providers: Dict[str, LLMProvider] = {}
@@ -817,6 +825,27 @@ class LLMRelationExtractor:
             self.providers["anthropic"] = AnthropicProvider(api_key=anthropic_api_key)
 
         self.preferred_provider = preferred_provider
+        self._log(f"Initialized with preferred provider: {preferred_provider}")
+
+    def _log(self, message: str, level: str = "info"):
+        """Log a message with appropriate formatting."""
+        prefix = "[LLMRelationExtractor]"
+        if level == "error":
+            logger.error(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✗ ERROR: {message}", file=sys.stderr)
+        elif level == "warning":
+            logger.warning(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ⚠ {message}")
+        elif level == "success":
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✓ {message}")
+        else:
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} {message}")
 
     def is_available(self) -> bool:
         """Check if any LLM provider is available."""
@@ -851,45 +880,79 @@ class LLMRelationExtractor:
 
         Returns:
             List of extracted relations
+
+        Raises:
+            LLMExtractionError: If extraction fails critically
         """
-        if not entity_pairs:
-            return []
+        self._log(f"Starting LLM extraction for {len(entity_pairs)} pairs...")
 
-        provider = self.get_available_provider()
-        if not provider:
-            logger.warning("No LLM provider available")
-            return []
+        try:
+            if not entity_pairs:
+                self._log("No entity pairs provided, skipping", "warning")
+                return []
 
-        relations = []
-        pairs_to_process = []
+            provider = self.get_available_provider()
+            if not provider:
+                self._log("No LLM provider available", "warning")
+                return []
 
-        # Check cache first
-        for pair in entity_pairs:
-            if use_cache and self.cache:
-                cached = self.cache.get(pair)
-                if cached:
-                    relations.append(cached)
-                    continue
-            pairs_to_process.append(pair)
+            self._log(f"Using provider: {type(provider).__name__}")
 
-        # Process uncached pairs
-        if pairs_to_process:
-            logger.info(f"Processing {len(pairs_to_process)} entity pairs with LLM")
-            new_relations = provider.extract_relations(pairs_to_process)
+            relations = []
+            pairs_to_process = []
+            cache_hits = 0
 
-            # Cache and collect results
-            for rel in new_relations:
-                if rel.confidence >= self.min_confidence:
-                    relations.append(rel)
+            # Check cache first
+            for pair in entity_pairs:
+                if use_cache and self.cache:
+                    cached = self.cache.get(pair)
+                    if cached:
+                        relations.append(cached)
+                        cache_hits += 1
+                        continue
+                pairs_to_process.append(pair)
 
-                    # Find matching pair and cache
-                    if self.cache:
-                        for pair in pairs_to_process:
-                            if pair.source_text == rel.source and pair.target_text == rel.target:
-                                self.cache.set(pair, rel)
-                                break
+            if cache_hits > 0:
+                self._log(f"Cache hits: {cache_hits}")
 
-        return relations
+            # Process uncached pairs
+            if pairs_to_process:
+                self._log(f"Processing {len(pairs_to_process)} pairs with LLM...")
+                try:
+                    new_relations = provider.extract_relations(pairs_to_process)
+
+                    # Cache and collect results
+                    accepted = 0
+                    rejected = 0
+                    for rel in new_relations:
+                        if rel.confidence >= self.min_confidence:
+                            relations.append(rel)
+                            accepted += 1
+
+                            # Find matching pair and cache
+                            if self.cache:
+                                for pair in pairs_to_process:
+                                    if pair.source_text == rel.source and pair.target_text == rel.target:
+                                        self.cache.set(pair, rel)
+                                        break
+                        else:
+                            rejected += 1
+
+                    if rejected > 0:
+                        self._log(f"Rejected {rejected} low-confidence relations")
+
+                except Exception as e:
+                    self._log(f"Provider extraction failed: {e}", "error")
+                    raise LLMExtractionError(f"Provider failed: {e}") from e
+
+            self._log(f"Completed: {len(relations)} relations extracted", "success")
+            return relations
+
+        except LLMExtractionError:
+            raise
+        except Exception as e:
+            self._log(f"Unexpected error: {e}", "error")
+            raise LLMExtractionError(f"Extraction failed: {e}") from e
 
     def extract_from_text(
         self,
