@@ -1,0 +1,241 @@
+{
+  "timestamp": "2026-01-08T23:47:43.524699",
+  "baseline": {
+    "found": 6,
+    "total_expected": 15,
+    "recall": 0.4,
+    "precision": 0.5,
+    "coherence": 0.45,
+    "total_relations": 120,
+    "type_dist": {
+      "ENABLES": 37,
+      "RELATED_TO": 51,
+      "CONTRASTS_WITH": 10,
+      "USES": 22
+    },
+    "found_list": [
+      {
+        "source": "Transformer",
+        "target": "self-attention",
+        "found": "RELATED_TO"
+      },
+      {
+        "source": "Transformer",
+        "target": "RNNs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "Transformer",
+        "target": "LSTMs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "Transformer",
+        "target": "WMT 2014",
+        "found": "RELATED_TO"
+      },
+      {
+        "source": "BERT",
+        "target": "masked language modeling",
+        "found": "USES"
+      },
+      {
+        "source": "BERT",
+        "target": "pre-training",
+        "found": "USES"
+      }
+    ],
+    "missed_list": [
+      {
+        "source": "Vaswani et al.",
+        "target": "Transformer",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Hochreiter and Schmidhuber",
+        "target": "LSTMs",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Devlin et al.",
+        "target": "BERT",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Dosovitskiy et al.",
+        "target": "Vision Transformer",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Vaswani et al.",
+        "target": "Google Brain",
+        "expected": [
+          "AFFILIATED_WITH",
+          "RELATED_TO"
+        ]
+      },
+      {
+        "source": "BERT",
+        "target": "GLUE",
+        "expected": [
+          "EVALUATED_ON"
+        ]
+      },
+      {
+        "source": "Vision Transformer",
+        "target": "ImageNet",
+        "expected": [
+          "EVALUATED_ON"
+        ]
+      },
+      {
+        "source": "Vision Transformer",
+        "target": "CNNs",
+        "expected": [
+          "CONTRASTS_WITH",
+          "IMPROVES"
+        ]
+      },
+      {
+        "source": "OpenAI",
+        "target": "GPT",
+        "expected": [
+          "DEVELOPS",
+          "CREATES",
+          "INTRODUCES"
+        ]
+      }
+    ]
+  },
+  "enhanced": {
+    "found": 10,
+    "total_expected": 15,
+    "recall": 0.667,
+    "precision": 0.68,
+    "coherence": 0.673,
+    "total_relations": 171,
+    "type_dist": {
+      "CONTRASTS_WITH": 20,
+      "USES": 30,
+      "INTRODUCES": 6,
+      "EVALUATED_ON": 9,
+      "TRAINED_ON": 2,
+      "RELATED_TO": 62,
+      "EXTENDS": 34,
+      "PART_OF": 5,
+      "CREATES": 3
+    },
+    "found_list": [
+      {
+        "source": "Vaswani et al.",
+        "target": "Transformer",
+        "found": "RELATED_TO"
+      },
+      {
+        "source": "Hochreiter and Schmidhuber",
+        "target": "LSTMs",
+        "found": "RELATED_TO"
+      },
+      {
+        "source": "Transformer",
+        "target": "self-attention",
+        "found": "USES"
+      },
+      {
+        "source": "Transformer",
+        "target": "RNNs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "Transformer",
+        "target": "LSTMs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "Transformer",
+        "target": "WMT 2014",
+        "found": "TRAINED_ON"
+      },
+      {
+        "source": "BERT",
+        "target": "GLUE",
+        "found": "EVALUATED_ON"
+      },
+      {
+        "source": "OpenAI",
+        "target": "GPT",
+        "found": "RELATED_TO"
+      },
+      {
+        "source": "BERT",
+        "target": "masked language modeling",
+        "found": "USES"
+      },
+      {
+        "source": "BERT",
+        "target": "pre-training",
+        "found": "USES"
+      }
+    ],
+    "missed_list": [
+      {
+        "source": "Devlin et al.",
+        "target": "BERT",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Dosovitskiy et al.",
+        "target": "Vision Transformer",
+        "expected": [
+          "INTRODUCES",
+          "CREATES",
+          "DEVELOPS"
+        ]
+      },
+      {
+        "source": "Vaswani et al.",
+        "target": "Google Brain",
+        "expected": [
+          "AFFILIATED_WITH",
+          "RELATED_TO"
+        ]
+      },
+      {
+        "source": "Vision Transformer",
+        "target": "ImageNet",
+        "expected": [
+          "EVALUATED_ON"
+        ]
+      },
+      {
+        "source": "Vision Transformer",
+        "target": "CNNs",
+        "expected": [
+          "CONTRASTS_WITH",
+          "IMPROVES"
+        ]
+      }
+    ]
+  },
+  "improvement": 0.223
+}
