@@ -101,6 +101,78 @@ Text vectors in Pinecone/FAISS
 
 Cached summaries in PostgreSQL
 
+### B.1 Integrated Relation Extraction Pipeline
+
+The knowledge graph construction uses an integrated pipeline combining multiple extraction methods:
+
+**Extraction Methods (in priority order):**
+
+1. **Coreference Resolution** (`coreference.py`)
+   - Resolves pronouns and anaphoric references (he, she, it, they)
+   - Handles definite descriptions ("the model", "this approach")
+   - Links references to their antecedent entities for better relation coverage
+
+2. **Dependency Parsing** (`dependency_parsing.py`)
+   - Uses spaCy's dependency parser for syntactic structure
+   - Extracts SVO (subject-verb-object) patterns
+   - Falls back to pattern-based parsing when spaCy unavailable
+
+3. **LLM-Based Extraction** (`llm_relations.py`)
+   - Semantic understanding for complex relations
+   - Supports multiple providers with automatic fallback:
+     - **Ollama** (default) - Local LLM server for offline use
+     - **llama.cpp** - Direct model loading for fully offline inference
+     - **OpenAI** - Cloud API (requires OPENAI_API_KEY)
+     - **Anthropic** - Cloud API (requires ANTHROPIC_API_KEY)
+
+4. **Pattern Matching** (`integrated_pipeline.py`)
+   - Rule-based extraction for common patterns
+   - Multi-word entity matching with prefer-longer strategy
+   - Co-occurrence fallback for uncovered entity pairs
+
+**Setup for Offline LLM (Ollama):**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Download a model
+ollama pull llama3.2
+
+# Start server
+ollama serve
+```
+
+**Setup for spaCy (Optional but recommended):**
+```bash
+python setup_spacy.py
+# Or manually:
+python -m spacy download en_core_web_sm
+```
+
+**Usage:**
+```python
+from app.services.graph.builder import get_graph_builder
+
+# Default: Uses integrated pipeline with Ollama
+builder = get_graph_builder()
+
+# With specific LLM provider
+builder = get_graph_builder(llm_provider="openai")
+
+# Without LLM (pattern-based only)
+builder = get_graph_builder(use_llm=False)
+
+# Build graph from text
+result = await builder.build_from_text(text, doc_id)
+```
+
+**Extraction Pipeline Files:**
+- `backend/app/services/graph/integrated_pipeline.py` - Main orchestrator
+- `backend/app/services/graph/coreference.py` - Pronoun resolution
+- `backend/app/services/graph/dependency_parsing.py` - Syntactic parsing
+- `backend/app/services/graph/llm_relations.py` - LLM providers
+- `backend/app/services/graph/spacy_loader.py` - Cached spaCy loader
+
 C. Reading Interface (Frontend)
 
 Goal: Human-centered reading experience with dual complexity modes.
@@ -254,11 +326,18 @@ Reflection Snapshot
 
 🧠 5. AI Models
 Purpose	Suggested Model	Notes
-Entity/Relation Extraction	GPT-4o / Claude 3.5	Structured JSON output
+Entity/Relation Extraction	Ollama (llama3.2) / GPT-4o / Claude 3.5	Local-first with cloud fallback
+Dependency Parsing	spaCy (en_core_web_sm)	Syntactic structure analysis
+Coreference Resolution	Rule-based + LLM hybrid	Pronoun and reference linking
 Summarization/Paraphrasing	GPT-4o-mini / Mistral 8x7B	Multi-level simplification
 Question Generation	T5 / FLAN-UL2	SRS integration
 Image Captioning	BLIP-2 / Pix2Struct	Diagram understanding
 Bias Audit	RoBERTa Sentiment / Perspective API	Language inclusivity checks
+
+**Local/Offline LLM Options:**
+- Ollama (recommended): Easy setup, runs llama3.2, mistral, qwen2.5 locally
+- llama.cpp: Direct GGUF model loading, fully offline
+- Both options enable knowledge graph construction without internet/API keys
 🧭 6. APIs and Integrations
 Function	API
 Document Validation	CrossRef, Unpaywall, CORE
