@@ -78,7 +78,79 @@ Storage Layer
 └── FAISS (vector embeddings)
 ```
 
-## Quick Start
+### B.1 Integrated Relation Extraction Pipeline
+
+The knowledge graph construction uses an integrated pipeline combining multiple extraction methods:
+
+**Extraction Methods (in priority order):**
+
+1. **Coreference Resolution** (`coreference.py`)
+   - Resolves pronouns and anaphoric references (he, she, it, they)
+   - Handles definite descriptions ("the model", "this approach")
+   - Links references to their antecedent entities for better relation coverage
+
+2. **Dependency Parsing** (`dependency_parsing.py`)
+   - Uses spaCy's dependency parser for syntactic structure
+   - Extracts SVO (subject-verb-object) patterns
+   - Falls back to pattern-based parsing when spaCy unavailable
+
+3. **LLM-Based Extraction** (`llm_relations.py`)
+   - Semantic understanding for complex relations
+   - Supports multiple providers with automatic fallback:
+     - **Ollama** (default) - Local LLM server for offline use
+     - **llama.cpp** - Direct model loading for fully offline inference
+     - **OpenAI** - Cloud API (requires OPENAI_API_KEY)
+     - **Anthropic** - Cloud API (requires ANTHROPIC_API_KEY)
+
+4. **Pattern Matching** (`integrated_pipeline.py`)
+   - Rule-based extraction for common patterns
+   - Multi-word entity matching with prefer-longer strategy
+   - Co-occurrence fallback for uncovered entity pairs
+
+**Setup for Offline LLM (Ollama):**
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Download a model
+ollama pull llama3.2
+
+# Start server
+ollama serve
+```
+
+**Setup for spaCy (Optional but recommended):**
+```bash
+python setup_spacy.py
+# Or manually:
+python -m spacy download en_core_web_sm
+```
+
+**Usage:**
+```python
+from app.services.graph.builder import get_graph_builder
+
+# Default: Uses integrated pipeline with Ollama
+builder = get_graph_builder()
+
+# With specific LLM provider
+builder = get_graph_builder(llm_provider="openai")
+
+# Without LLM (pattern-based only)
+builder = get_graph_builder(use_llm=False)
+
+# Build graph from text
+result = await builder.build_from_text(text, doc_id)
+```
+
+**Extraction Pipeline Files:**
+- `backend/app/services/graph/integrated_pipeline.py` - Main orchestrator
+- `backend/app/services/graph/coreference.py` - Pronoun resolution
+- `backend/app/services/graph/dependency_parsing.py` - Syntactic parsing
+- `backend/app/services/graph/llm_relations.py` - LLM providers
+- `backend/app/services/graph/spacy_loader.py` - Cached spaCy loader
+
+C. Reading Interface (Frontend)
 
 ```bash
 # Clone the repository
@@ -376,11 +448,120 @@ Content-Type: application/json
 }
 ```
 
-#### Export to Zotero
-```http
-POST /api/v1/scholar/zotero/export
-Authorization: Bearer <token>
-Content-Type: application/json
+🧠 5. AI Models
+Purpose	Suggested Model	Notes
+Entity/Relation Extraction	Ollama (llama3.2) / GPT-4o / Claude 3.5	Local-first with cloud fallback
+Dependency Parsing	spaCy (en_core_web_sm)	Syntactic structure analysis
+Coreference Resolution	Rule-based + LLM hybrid	Pronoun and reference linking
+Summarization/Paraphrasing	GPT-4o-mini / Mistral 8x7B	Multi-level simplification
+Question Generation	T5 / FLAN-UL2	SRS integration
+Image Captioning	BLIP-2 / Pix2Struct	Diagram understanding
+Bias Audit	RoBERTa Sentiment / Perspective API	Language inclusivity checks
+
+**Local/Offline LLM Options:**
+- Ollama (recommended): Easy setup, runs llama3.2, mistral, qwen2.5 locally
+- llama.cpp: Direct GGUF model loading, fully offline
+- Both options enable knowledge graph construction without internet/API keys
+🧭 6. APIs and Integrations
+Function	API
+Document Validation	CrossRef, Unpaywall, CORE
+Metadata & Author ID	ORCID, ROR
+Citation Management	Zotero
+Provenance	C2PA
+Knowledge Links	Wikipedia, arXiv, Semantic Scholar
+LMS Integration	LTI 1.3 (Canvas, Moodle)
+Analytics	Mixpanel / PostHog
+Storage	AWS S3 / GCS / IPFS (optional decentralized mode)
+💡 7. Security & Privacy
+
+All data encrypted (AES-256 at rest, TLS 1.3 in transit)
+
+Differential privacy for analytics
+
+Strict user consent for data collection
+
+OpenAI usage governed under academic license agreements
+
+🧰 8. Development Environment
+Stack	Tool
+Backend	Python 3.11+, FastAPI, LangChain/LangGraph
+Frontend	Next.js (React 18+), Tailwind, D3.js
+Database	PostgreSQL + Neo4j (or Weaviate)
+Embeddings	Pinecone or FAISS
+Auth	OAuth2 + JWT (optional ORCID login)
+Testing	PyTest + Cypress
+DevOps	Docker Compose + GitHub Actions CI/CD
+🚀 9. Roadmap Summary
+Milestone	Deliverables
+v0.1	Document ingestion + validation
+v0.2	Semantic graph + embeddings
+v0.3	Reading interface MVP
+v0.4	Adaptive focus mode
+v0.5	Scholar Mode + reflection engine
+v1.0	Ethics + provenance + public beta
+🧩 10. Licensing & Open Science
+
+License: AGPL v3 (to ensure community benefit)
+
+Open access to non-proprietary models and datasets
+
+Opt-in Transparency Portal:
+
+Model prompts
+
+Bias metrics
+
+Audit logs
+
+Citation sources
+
+1. System Overview
+Strengths: The five-layer modular design promotes separation of concerns, making it easier to iterate on individual components (e.g., swapping out the knowledge graph backend without disrupting the frontend). This aligns with microservices principles and facilitates contributions from open-source communities under AGPL v3.
+Challenges: Inter-layer communication could introduce latency if not optimized—e.g., real-time updates from the adaptive learning layer to the frontend.
+Suggestions:
+
+Add a sixth "Orchestration Layer" using tools like Apache Airflow or LangGraph extensions for workflow automation, ensuring smooth data flow across layers.
+Define clear APIs between layers (e.g., gRPC for low-latency backend comms) to enable plugin-based extensions, like third-party LLM integrations.
+
+2. System Architecture
+Strengths: The stack choice (Next.js/FastAPI/LangGraph/Neo4j) is solid—performant, scalable, and community-supported. Incorporating vector stores like Weaviate (with its hybrid search) over pure Neo4j could enhance semantic queries. C2PA for provenance is a smart nod to emerging content authenticity standards.
+Challenges: Multi-database management (PostgreSQL + Neo4j/Weaviate + Pinecone) risks data silos; ensure eventual consistency via event-driven patterns (e.g., Kafka).
+Suggestions:
+
+For storage, consider a unified vector-graph hybrid like Weaviate or Milvus to consolidate embeddings and relations, reducing query hops.
+Add a caching layer (Redis) for frequent accesses, like paraphrase generations, to cut LLM API costs.
+Visualize the architecture with a diagram in docs—use Mermaid.js for embeddable flowcharts.
+
+3. Functional Modules
+A. Document Ingestion & Validation
+Strengths: Comprehensive validation pipeline builds trust; ORCID/ROR integration ensures author credibility in academic contexts.
+Challenges: API rate limits (e.g., CrossRef) could bottleneck bulk uploads; handle with async queues.
+Suggestions:
+
+Enhance OCR with multimodal models like Donut (for structured docs) to better handle tables/formulas in scanned PDFs.
+Add plagiarism checks via tools like Turnitin API or simple cosine similarity on embeddings.
+
+B. Semantic Parsing & Knowledge Graph
+Strengths: LangChain orchestration + spaCy/GPT-4o for extraction is efficient; multimodal support (CLIP/Pix2Struct) makes it versatile for STEM texts.
+Challenges: Graph schema might bloat with large docs; enforce node pruning based on relevance scores.
+Suggestions:
+
+Extend relations with temporal edges (e.g., EVOLVED_FROM for historical concepts) to support reflection timelines.
+For external linkers, integrate Hugging Face datasets API for open-source data augmentation.
+Prototype Tip: I could simulate a mini knowledge graph here using NetworkX (available in my environment) on a sample text excerpt. If you'd like, provide a short document snippet, and I'll code a basic extraction.
+
+C. Reading Interface (Frontend)
+Strengths: Dual-view with hybrid slider is intuitive; Zustand for state keeps it lightweight.
+Challenges: Real-time paraphrase generation could strain client-side resources; offload to backend via WebSockets.
+Suggestions:
+
+Integrate accessibility features like ARIA labels and voice-over support for conceptual views.
+Add collaborative editing (e.g., via ShareDB) for teacher-student annotations.
+
+D. Intelligent Focus Mode
+Strengths: BERT + graph traversal for prioritization is explainable; RLHF-lite feedback loop enables personalization.
+Challenges: Attention heatmaps via Captum require PyTorch integration, which might complicate the backend.
+Suggestions:
 
 {
   "items": [

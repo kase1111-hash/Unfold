@@ -1,6 +1,16 @@
-"""Relation extraction service using LLM."""
+"""Relation extraction service using LLM.
+
+Supports multiple extraction strategies:
+1. Integrated Pipeline (default) - Combines coreference, dependency, LLM, and patterns
+2. LLM-only extraction - Uses OpenAI/Anthropic/Ollama for semantic extraction
+3. Rule-based extraction - Pattern and dependency-based (no LLM required)
+
+The integrated pipeline uses Ollama as the default LLM provider for local/offline
+operation, with fallback to cloud APIs when configured.
+"""
 
 import json
+import logging
 from typing import Any
 
 from app.config import get_settings
@@ -8,6 +18,7 @@ from app.models.graph import RelationType
 from app.services.graph.extractor import ExtractedEntity, ExtractedRelation
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Relation extraction prompt template
 RELATION_EXTRACTION_PROMPT = """You are an expert at extracting relationships between concepts from academic and technical text.
@@ -392,19 +403,49 @@ class RuleBasedRelationExtractor:
 # Global extractors
 _llm_extractor: RelationExtractor | None = None
 _rule_extractor: RuleBasedRelationExtractor | None = None
+_integrated_extractor = None
 
 
-def get_relation_extractor(use_llm: bool = True) -> RelationExtractor | RuleBasedRelationExtractor:
+def get_relation_extractor(
+    use_llm: bool = True,
+    use_integrated: bool = True,
+    llm_provider: str = "ollama",
+) -> Any:
     """Get relation extractor instance.
 
     Args:
         use_llm: Whether to use LLM-based extraction
+        use_integrated: Whether to use integrated pipeline (recommended)
+        llm_provider: LLM provider for integrated pipeline ("ollama", "openai", etc.)
 
     Returns:
         Extractor instance
     """
-    global _llm_extractor, _rule_extractor
+    global _llm_extractor, _rule_extractor, _integrated_extractor
 
+    # Prefer integrated pipeline (combines all methods)
+    if use_integrated:
+        if _integrated_extractor is None:
+            try:
+                from app.services.graph.integrated_pipeline import IntegratedRelationExtractor
+                _integrated_extractor = IntegratedRelationExtractor(
+                    use_coreference=True,
+                    use_dependency=True,
+                    use_llm=use_llm,
+                    use_patterns=True,
+                    llm_provider=llm_provider,
+                    openai_key=settings.openai_api_key if hasattr(settings, 'openai_api_key') else None,
+                )
+                logger.info(f"Using integrated pipeline with LLM provider: {llm_provider}")
+            except ImportError as e:
+                logger.warning(f"Integrated pipeline unavailable: {e}")
+                # Fall back to standard extractors
+                use_integrated = False
+
+        if _integrated_extractor is not None:
+            return _integrated_extractor
+
+    # Fallback to original extractors
     if use_llm:
         if _llm_extractor is None:
             _llm_extractor = RelationExtractor()
@@ -413,3 +454,11 @@ def get_relation_extractor(use_llm: bool = True) -> RelationExtractor | RuleBase
         if _rule_extractor is None:
             _rule_extractor = RuleBasedRelationExtractor()
         return _rule_extractor
+
+
+def reset_extractors():
+    """Reset all global extractor instances."""
+    global _llm_extractor, _rule_extractor, _integrated_extractor
+    _llm_extractor = None
+    _rule_extractor = None
+    _integrated_extractor = None
