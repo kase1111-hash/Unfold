@@ -25,7 +25,9 @@ class DocumentORM(Base):
 
     doc_id: Mapped[str] = mapped_column(String(100), primary_key=True)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    authors: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    authors: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
     doi: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     abstract: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -47,7 +49,9 @@ class DocumentORM(Base):
 
     # Storage and processing info
     vector_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    graph_nodes: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    graph_nodes: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -78,7 +82,9 @@ class DocumentORM(Base):
     )
 
     # Relationships
-    owner: Mapped["UserORM | None"] = relationship("UserORM", back_populates="documents")
+    owner: Mapped["UserORM | None"] = relationship(
+        "UserORM", back_populates="documents"
+    )
     validation: Mapped["DocumentValidationORM | None"] = relationship(
         "DocumentValidationORM",
         back_populates="document",
@@ -105,12 +111,20 @@ class DocumentValidationORM(Base):
 
     is_valid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     doi_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    license_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    author_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    license_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    author_verified: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     provenance_hash: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    validation_errors: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    validation_errors: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
 
-    validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    validated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
@@ -118,7 +132,9 @@ class DocumentValidationORM(Base):
     )
 
     # Relationships
-    document: Mapped["DocumentORM"] = relationship("DocumentORM", back_populates="validation")
+    document: Mapped["DocumentORM"] = relationship(
+        "DocumentORM", back_populates="validation"
+    )
 
     def __repr__(self) -> str:
         return f"<DocumentValidation(doc_id={self.doc_id}, is_valid={self.is_valid})>"

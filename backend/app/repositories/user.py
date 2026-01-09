@@ -138,7 +138,9 @@ class UserRepository:
             Tuple of (user_id, hashed_password) if found, None otherwise
         """
         result = await self.session.execute(
-            select(UserORM.user_id, UserORM.hashed_password).where(UserORM.email == email)
+            select(UserORM.user_id, UserORM.hashed_password).where(
+                UserORM.email == email
+            )
         )
         row = result.one_or_none()
 
@@ -165,9 +167,7 @@ class UserRepository:
         update_dict["updated_at"] = datetime.now(timezone.utc)
 
         await self.session.execute(
-            update(UserORM)
-            .where(UserORM.user_id == user_id)
-            .values(**update_dict)
+            update(UserORM).where(UserORM.user_id == user_id).values(**update_dict)
         )
 
         return await self.get_by_id(user_id)

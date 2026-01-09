@@ -1,7 +1,6 @@
 """Vector store connection for embeddings (FAISS and Pinecone)."""
 
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +139,9 @@ async def faiss_search(
 
     # Search with extra results for post-filtering
     search_k = k * 3 if filter_metadata else k
-    distances, indices = _faiss_index.search(query_np, min(search_k, _faiss_index.ntotal))
+    distances, indices = _faiss_index.search(
+        query_np, min(search_k, _faiss_index.ntotal)
+    )
 
     # Reverse ID map for lookup
     idx_to_id = {v: k for k, v in _faiss_id_map.items()}
@@ -161,11 +162,13 @@ async def faiss_search(
             if not all(metadata.get(k) == v for k, v in filter_metadata.items()):
                 continue
 
-        results.append({
-            "id": vec_id,
-            "score": float(1 / (1 + dist)),  # Convert L2 distance to similarity
-            "metadata": metadata,
-        })
+        results.append(
+            {
+                "id": vec_id,
+                "score": float(1 / (1 + dist)),  # Convert L2 distance to similarity
+                "metadata": metadata,
+            }
+        )
 
         if len(results) >= k:
             break
@@ -204,7 +207,7 @@ async def check_faiss_connection() -> dict[str, str | bool]:
     global _faiss_index
 
     try:
-        import faiss
+        import faiss  # noqa: F401
 
         if _faiss_index is None:
             return {

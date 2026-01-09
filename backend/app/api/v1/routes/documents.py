@@ -41,9 +41,13 @@ class DocumentListResponse(BaseModel):
     page_size: int
 
 
-@router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/upload",
+    response_model=DocumentUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_document(
-    file: Annotated[UploadFile, File(description="PDF or EPUB document to upload")]
+    file: Annotated[UploadFile, File(description="PDF or EPUB document to upload")],
 ) -> DocumentUploadResponse:
     """Upload a document for processing.
 

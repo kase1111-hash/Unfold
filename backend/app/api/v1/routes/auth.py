@@ -54,9 +54,7 @@ class MessageResponse(BaseModel):
 
 
 # Helper to get auth service
-async def get_auth_service(
-    db: Annotated[AsyncSession, Depends(get_db)]
-) -> AuthService:
+async def get_auth_service(db: Annotated[AsyncSession, Depends(get_db)]) -> AuthService:
     """Get auth service instance."""
     return AuthService(db)
 

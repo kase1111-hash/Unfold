@@ -15,6 +15,7 @@ from app.config import settings
 
 class CredibilityLevel(str, Enum):
     """Credibility assessment levels."""
+
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -24,6 +25,7 @@ class CredibilityLevel(str, Enum):
 @dataclass
 class CredibilityScore:
     """Comprehensive credibility assessment."""
+
     overall_score: float  # 0-100
     level: CredibilityLevel
 
@@ -190,8 +192,17 @@ class CredibilityScorer:
 
         # Known high-impact venues
         high_impact_venues = [
-            "nature", "science", "cell", "lancet", "nejm",
-            "jama", "pnas", "acm", "ieee", "neurips", "icml",
+            "nature",
+            "science",
+            "cell",
+            "lancet",
+            "nejm",
+            "jama",
+            "pnas",
+            "acm",
+            "ieee",
+            "neurips",
+            "icml",
         ]
         if venue:
             venue_lower = venue.lower()
@@ -316,11 +327,15 @@ class CredibilityScorer:
 
             # Check for news mentions
             if altmetric_data.get("cited_by_msm_count", 0) > 0:
-                notes.append(f"Mentioned in {altmetric_data['cited_by_msm_count']} news outlets")
+                notes.append(
+                    f"Mentioned in {altmetric_data['cited_by_msm_count']} news outlets"
+                )
 
         # Calculate component scores
         citation_score = self._calculate_citation_score(citation_count, year)
-        venue_score = self._calculate_venue_score(venue, impact_factor, is_peer_reviewed)
+        venue_score = self._calculate_venue_score(
+            venue, impact_factor, is_peer_reviewed
+        )
         recency_score = self._calculate_recency_score(year)
         altmetric_score = self._calculate_altmetric_score(altmetric_attention)
         author_score = 50.0  # Placeholder - would need author lookup
@@ -335,11 +350,11 @@ class CredibilityScorer:
         }
 
         overall_score = (
-            weights["citation"] * citation_score +
-            weights["venue"] * venue_score +
-            weights["author"] * author_score +
-            weights["recency"] * recency_score +
-            weights["altmetric"] * altmetric_score
+            weights["citation"] * citation_score
+            + weights["venue"] * venue_score
+            + weights["author"] * author_score
+            + weights["recency"] * recency_score
+            + weights["altmetric"] * altmetric_score
         )
 
         # Apply penalties

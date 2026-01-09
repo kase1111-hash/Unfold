@@ -28,7 +28,8 @@ def is_spacy_available() -> bool:
 
     try:
         import spacy
-        nlp = spacy.load(_model_name)
+
+        spacy.load(_model_name)  # Verify model is available
         _spacy_available = True
         logger.info(f"spaCy model '{_model_name}' is available")
     except ImportError:
@@ -58,6 +59,7 @@ def get_nlp():
 
     try:
         import spacy
+
         _nlp_instance = spacy.load(_model_name)
 
         # Optimize for our use case (disable unused components)
@@ -127,6 +129,7 @@ def reset():
 
 # Convenience functions for common NLP tasks
 
+
 def extract_entities(text: str) -> list:
     """
     Extract named entities from text using spaCy.
@@ -152,7 +155,10 @@ def extract_noun_chunks(text: str) -> list:
     if doc is None:
         return []
 
-    return [(chunk.text, chunk.root.text, chunk.start, chunk.end) for chunk in doc.noun_chunks]
+    return [
+        (chunk.text, chunk.root.text, chunk.start, chunk.end)
+        for chunk in doc.noun_chunks
+    ]
 
 
 def get_dependencies(text: str) -> list:

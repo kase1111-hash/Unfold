@@ -16,6 +16,7 @@ from dataclasses import dataclass
 @dataclass
 class FlashcardData:
     """Flashcard data for export."""
+
     card_id: str
     question: str
     answer: str
@@ -175,21 +176,25 @@ class ExportService:
 
         # YAML frontmatter
         if include_frontmatter:
-            lines.extend([
-                "---",
-                f"title: {title}",
-                f"created: {datetime.utcnow().strftime('%Y-%m-%d')}",
-                "tags:",
-                "  - flashcards",
-                "  - unfold-export",
-                "---",
-                "",
-            ])
+            lines.extend(
+                [
+                    "---",
+                    f"title: {title}",
+                    f"created: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                    "tags:",
+                    "  - flashcards",
+                    "  - unfold-export",
+                    "---",
+                    "",
+                ]
+            )
 
         # Title
         lines.append(f"# {title}")
         lines.append("")
-        lines.append(f"*Exported from Unfold on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}*")
+        lines.append(
+            f"*Exported from Unfold on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}*"
+        )
         lines.append("")
 
         # Flashcards
@@ -329,7 +334,9 @@ class ExportService:
                     "tags": card.tags or [],
                     "hint": card.hint,
                     "source": card.source,
-                    "created_at": card.created_at.isoformat() if card.created_at else None,
+                    "created_at": (
+                        card.created_at.isoformat() if card.created_at else None
+                    ),
                 }
                 for card in flashcards
             ],

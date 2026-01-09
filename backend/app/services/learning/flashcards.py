@@ -15,6 +15,7 @@ from app.config import settings
 
 class QuestionType(str, Enum):
     """Types of flashcard questions."""
+
     DEFINITION = "definition"
     CONCEPT = "concept"
     COMPARISON = "comparison"
@@ -180,7 +181,9 @@ Return ONLY the JSON array, no additional text."""
 
         for i, sentence in enumerate(sentences[:num_cards]):
             # Extract key terms (capitalized words, quoted terms)
-            key_terms = re.findall(r'"([^"]+)"|([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', sentence)
+            key_terms = re.findall(
+                r'"([^"]+)"|([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', sentence
+            )
             key_terms = [t[0] or t[1] for t in key_terms if t[0] or t[1]]
 
             # Create a fill-in-the-blank style question
@@ -195,16 +198,18 @@ Return ONLY the JSON array, no additional text."""
                 answer = sentence
                 q_type = QuestionType.CONCEPT
 
-            flashcards.append({
-                "card_id": f"fc_fallback_{i}",
-                "question": question,
-                "answer": answer,
-                "type": q_type.value,
-                "difficulty": "intermediate",
-                "key_concepts": key_terms[:3],
-                "hint": None,
-                "source_hash": hash(text) % 1000000,
-            })
+            flashcards.append(
+                {
+                    "card_id": f"fc_fallback_{i}",
+                    "question": question,
+                    "answer": answer,
+                    "type": q_type.value,
+                    "difficulty": "intermediate",
+                    "key_concepts": key_terms[:3],
+                    "hint": None,
+                    "source_hash": hash(text) % 1000000,
+                }
+            )
 
         return flashcards
 
@@ -236,7 +241,11 @@ Return ONLY the JSON array, no additional text."""
         terms = []
         for pattern in patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
-            terms.extend(matches if isinstance(matches[0] if matches else "", str) else [m[0] for m in matches])
+            terms.extend(
+                matches
+                if isinstance(matches[0] if matches else "", str)
+                else [m[0] for m in matches]
+            )
 
         # Deduplicate and limit
         terms = list(dict.fromkeys(terms))[:num_deletions]
@@ -253,13 +262,15 @@ Return ONLY the JSON array, no additional text."""
                         flags=re.IGNORECASE,
                         count=1,
                     )
-                    cloze_cards.append({
-                        "card_id": f"cloze_{i}",
-                        "cloze_text": cloze_text.strip(),
-                        "answer": term,
-                        "type": "cloze",
-                        "difficulty": "intermediate",
-                    })
+                    cloze_cards.append(
+                        {
+                            "card_id": f"cloze_{i}",
+                            "cloze_text": cloze_text.strip(),
+                            "answer": term,
+                            "type": "cloze",
+                            "difficulty": "intermediate",
+                        }
+                    )
                     break
 
         return cloze_cards

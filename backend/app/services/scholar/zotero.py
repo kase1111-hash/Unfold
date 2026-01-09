@@ -12,9 +12,12 @@ from typing import Optional
 @dataclass
 class ZoteroItem:
     """Represents a citation item for Zotero export."""
+
     item_type: str = "journalArticle"  # book, bookSection, conferencePaper, etc.
     title: str = ""
-    authors: list[dict] = field(default_factory=list)  # [{"firstName": "", "lastName": ""}]
+    authors: list[dict] = field(
+        default_factory=list
+    )  # [{"firstName": "", "lastName": ""}]
     abstract: Optional[str] = None
     date: Optional[str] = None  # YYYY-MM-DD or YYYY
     doi: Optional[str] = None
@@ -34,6 +37,7 @@ class ZoteroItem:
 @dataclass
 class ZoteroCollection:
     """Represents a collection of citations."""
+
     name: str
     items: list[ZoteroItem] = field(default_factory=list)
     description: Optional[str] = None
@@ -356,16 +360,20 @@ class ZoteroExporter:
                 # Parse "Last, First" or "First Last" format
                 if "," in author:
                     parts = author.split(",", 1)
-                    authors.append({
-                        "lastName": parts[0].strip(),
-                        "firstName": parts[1].strip() if len(parts) > 1 else "",
-                    })
+                    authors.append(
+                        {
+                            "lastName": parts[0].strip(),
+                            "firstName": parts[1].strip() if len(parts) > 1 else "",
+                        }
+                    )
                 else:
                     parts = author.rsplit(" ", 1)
-                    authors.append({
-                        "firstName": parts[0] if len(parts) > 1 else "",
-                        "lastName": parts[-1],
-                    })
+                    authors.append(
+                        {
+                            "firstName": parts[0] if len(parts) > 1 else "",
+                            "lastName": parts[-1],
+                        }
+                    )
             elif isinstance(author, dict):
                 authors.append(author)
 

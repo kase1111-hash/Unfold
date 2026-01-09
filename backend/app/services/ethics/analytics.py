@@ -5,7 +5,7 @@ Provides metrics and insights about AI operations and ethical practices.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional, Any
+from typing import Optional
 from enum import Enum
 import uuid
 from collections import defaultdict
@@ -13,6 +13,7 @@ from collections import defaultdict
 
 class MetricType(str, Enum):
     """Types of ethics metrics."""
+
     AI_USAGE = "ai_usage"
     CONTENT_PROCESSING = "content_processing"
     DATA_ACCESS = "data_access"
@@ -23,15 +24,17 @@ class MetricType(str, Enum):
 
 class TransparencyLevel(str, Enum):
     """Transparency levels for operations."""
-    FULL = "full"          # Complete details available
-    SUMMARY = "summary"    # Aggregated information
-    MINIMAL = "minimal"    # Basic acknowledgment only
+
+    FULL = "full"  # Complete details available
+    SUMMARY = "summary"  # Aggregated information
+    MINIMAL = "minimal"  # Basic acknowledgment only
     REDACTED = "redacted"  # Sensitive details hidden
 
 
 @dataclass
 class AIOperation:
     """Record of an AI operation for transparency."""
+
     operation_id: str
     operation_type: str
     timestamp: datetime
@@ -68,6 +71,7 @@ class AIOperation:
 @dataclass
 class EthicsMetric:
     """A single ethics metric."""
+
     metric_id: str
     metric_type: MetricType
     name: str
@@ -91,6 +95,7 @@ class EthicsMetric:
 @dataclass
 class UserEthicsProfile:
     """User's ethics and transparency profile."""
+
     user_id: str
     created_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -122,9 +127,12 @@ class UserEthicsProfile:
 @dataclass
 class EthicsDashboard:
     """Complete ethics dashboard for a user."""
+
     user_id: str
     generated_at: datetime = field(default_factory=datetime.utcnow)
-    period_start: datetime = field(default_factory=lambda: datetime.utcnow() - timedelta(days=30))
+    period_start: datetime = field(
+        default_factory=lambda: datetime.utcnow() - timedelta(days=30)
+    )
     period_end: datetime = field(default_factory=datetime.utcnow)
 
     # Summary stats
@@ -169,9 +177,12 @@ class EthicsDashboard:
 @dataclass
 class AggregatedReport:
     """Aggregated ethics report (anonymized across users)."""
+
     report_id: str
     generated_at: datetime = field(default_factory=datetime.utcnow)
-    period_start: datetime = field(default_factory=lambda: datetime.utcnow() - timedelta(days=30))
+    period_start: datetime = field(
+        default_factory=lambda: datetime.utcnow() - timedelta(days=30)
+    )
     period_end: datetime = field(default_factory=datetime.utcnow)
 
     # Aggregated metrics
@@ -380,7 +391,9 @@ class EthicsAnalytics:
         operations = self._operations.get(user_id, [])
 
         if operation_type:
-            operations = [op for op in operations if op.operation_type == operation_type]
+            operations = [
+                op for op in operations if op.operation_type == operation_type
+            ]
 
         if since:
             operations = [op for op in operations if op.timestamp >= since]
@@ -442,8 +455,7 @@ class EthicsAnalytics:
         # Count bias findings
         metrics = self.get_user_metrics(user_id, since=period_start)
         bias_findings = sum(
-            1 for m in metrics
-            if m.metric_type == MetricType.BIAS_DETECTION
+            1 for m in metrics if m.metric_type == MetricType.BIAS_DETECTION
         )
 
         # Calculate privacy score based on actions and settings
@@ -451,9 +463,7 @@ class EthicsAnalytics:
         privacy_score = self._calculate_privacy_score(profile)
 
         # Generate recommendations
-        recommendations = self._generate_recommendations(
-            profile, operations, metrics
-        )
+        recommendations = self._generate_recommendations(profile, operations, metrics)
 
         return EthicsDashboard(
             user_id=user_id,
@@ -500,7 +510,10 @@ class EthicsAnalytics:
         recommendations = []
 
         # Check transparency level
-        if profile.transparency_level in [TransparencyLevel.MINIMAL, TransparencyLevel.REDACTED]:
+        if profile.transparency_level in [
+            TransparencyLevel.MINIMAL,
+            TransparencyLevel.REDACTED,
+        ]:
             recommendations.append(
                 "Consider increasing your transparency level to get more detailed insights "
                 "into how AI processes your documents."
@@ -508,7 +521,8 @@ class EthicsAnalytics:
 
         # Check for low confidence operations
         low_confidence_ops = [
-            op for op in operations
+            op
+            for op in operations
             if op.confidence_score is not None and op.confidence_score < 0.7
         ]
         if low_confidence_ops:
@@ -565,7 +579,8 @@ class EthicsAnalytics:
 
         # Filter to consenting users
         consenting_users = [
-            uid for uid, profile in self._profiles.items()
+            uid
+            for uid, profile in self._profiles.items()
             if profile.allow_aggregated_analytics
         ]
 
@@ -620,7 +635,9 @@ class EthicsAnalytics:
             period_start=period_start,
             total_users=len(consenting_users),
             total_operations=total_ops,
-            avg_operations_per_user=total_ops / len(consenting_users) if consenting_users else 0,
+            avg_operations_per_user=(
+                total_ops / len(consenting_users) if consenting_users else 0
+            ),
             operation_type_distribution=operation_distribution,
             bias_category_distribution=bias_distribution,
             avg_privacy_score=avg_privacy,

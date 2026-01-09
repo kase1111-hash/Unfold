@@ -3,7 +3,7 @@ Engagement Tracker for measuring user reading behavior.
 Tracks dwell time, scroll depth, interactions, and comprehension signals.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -12,6 +12,7 @@ from collections import defaultdict
 
 class InteractionType(str, Enum):
     """Types of user interactions."""
+
     SCROLL = "scroll"
     HIGHLIGHT = "highlight"
     CLICK_NODE = "click_node"
@@ -27,6 +28,7 @@ class InteractionType(str, Enum):
 @dataclass
 class ReadingSession:
     """Represents a single reading session."""
+
     session_id: str
     user_id: str
     document_id: str
@@ -58,6 +60,7 @@ class ReadingSession:
 @dataclass
 class SectionEngagement:
     """Engagement metrics for a document section."""
+
     section_id: str
     total_dwell_time_ms: int = 0
     view_count: int = 0
@@ -70,6 +73,7 @@ class SectionEngagement:
 @dataclass
 class UserEngagementProfile:
     """Aggregated engagement profile for a user."""
+
     user_id: str
     total_reading_time_minutes: float = 0
     documents_read: int = 0
@@ -88,7 +92,9 @@ class EngagementTracker:
 
     def __init__(self):
         self._sessions: dict[str, ReadingSession] = {}
-        self._section_engagement: dict[str, dict[str, SectionEngagement]] = defaultdict(dict)
+        self._section_engagement: dict[str, dict[str, SectionEngagement]] = defaultdict(
+            dict
+        )
         self._user_profiles: dict[str, UserEngagementProfile] = {}
 
     def start_session(
@@ -194,10 +200,14 @@ class EngagementTracker:
             if section_id in self._section_engagement[doc_id]:
                 self._section_engagement[doc_id][section_id].scroll_passes += 1
 
-        self._record_interaction(session_id, InteractionType.SCROLL, {
-            "depth": scroll_depth,
-            "section_id": section_id,
-        })
+        self._record_interaction(
+            session_id,
+            InteractionType.SCROLL,
+            {
+                "depth": scroll_depth,
+                "section_id": section_id,
+            },
+        )
 
     def record_interaction(
         self,
@@ -267,18 +277,20 @@ class EngagementTracker:
         # Update averages (running average)
         n = profile.documents_read
         profile.avg_session_duration_minutes = (
-            (profile.avg_session_duration_minutes * (n - 1) + session.duration_minutes) / n
-        )
+            profile.avg_session_duration_minutes * (n - 1) + session.duration_minutes
+        ) / n
         profile.avg_scroll_depth = (
-            (profile.avg_scroll_depth * (n - 1) + session.max_scroll_depth) / n
-        )
+            profile.avg_scroll_depth * (n - 1) + session.max_scroll_depth
+        ) / n
 
         # Update preferred complexity
         if session.complexity_adjustments:
-            avg_complexity = sum(session.complexity_adjustments) / len(session.complexity_adjustments)
-            profile.preferred_complexity = (
-                (profile.preferred_complexity * (n - 1) + avg_complexity) / n
+            avg_complexity = sum(session.complexity_adjustments) / len(
+                session.complexity_adjustments
             )
+            profile.preferred_complexity = (
+                profile.preferred_complexity * (n - 1) + avg_complexity
+            ) / n
 
         # Estimate comprehension score based on engagement signals
         profile.comprehension_score = self._estimate_comprehension(session, profile)
@@ -318,9 +330,9 @@ class EngagementTracker:
 
         # Interaction score
         interaction_count = (
-            session.highlights_created * 2 +
-            session.questions_asked * 3 +
-            session.flashcards_created * 2
+            session.highlights_created * 2
+            + session.questions_asked * 3
+            + session.flashcards_created * 2
         )
         score += min(0.2, interaction_count * 0.02)
 
@@ -400,7 +412,9 @@ class EngagementTracker:
         }
 
         if profile:
-            recommendations["suggested_complexity"] = round(profile.preferred_complexity)
+            recommendations["suggested_complexity"] = round(
+                profile.preferred_complexity
+            )
 
             if profile.avg_scroll_depth < 0.5:
                 recommendations["tips"].append(

@@ -6,7 +6,6 @@ Provides distributed caching with persistence and high availability.
 import json
 import logging
 from typing import Optional, Any
-from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +262,9 @@ class RedisCache:
         """Get cache statistics."""
         stats = dict(self._stats)
         total = stats["hits"] + stats["misses"]
-        stats["hit_rate"] = f"{(stats['hits'] / total * 100):.2f}%" if total > 0 else "0.00%"
+        stats["hit_rate"] = (
+            f"{(stats['hits'] / total * 100):.2f}%" if total > 0 else "0.00%"
+        )
         stats["redis_available"] = is_redis_available()
         return stats
 
@@ -279,15 +280,15 @@ class RedisCacheManager:
 
     # Cache namespaces with TTL configuration
     NAMESPACES = {
-        "documents": 3600,      # 1 hour
-        "graphs": 1800,         # 30 minutes
-        "embeddings": 7200,     # 2 hours
-        "api_responses": 300,   # 5 minutes
+        "documents": 3600,  # 1 hour
+        "graphs": 1800,  # 30 minutes
+        "embeddings": 7200,  # 2 hours
+        "api_responses": 300,  # 5 minutes
         "user_sessions": 3600,  # 1 hour
-        "citations": 3600,      # 1 hour
-        "ethics": 600,          # 10 minutes
-        "rate_limit": 60,       # 1 minute
-        "search": 900,          # 15 minutes
+        "citations": 3600,  # 1 hour
+        "ethics": 600,  # 10 minutes
+        "rate_limit": 60,  # 1 minute
+        "search": 900,  # 15 minutes
     }
 
     def __init__(self):

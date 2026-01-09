@@ -4,7 +4,6 @@ Includes flashcards, spaced repetition, engagement tracking, and exports.
 """
 
 import uuid
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Response
@@ -27,8 +26,10 @@ router = APIRouter(prefix="/learning", tags=["learning"])
 
 # ============== Pydantic Models ==============
 
+
 class RelevanceRequest(BaseModel):
     """Request to score text relevance."""
+
     text: str = Field(..., min_length=10)
     query: str = Field(..., min_length=3)
     tfidf_weight: float = Field(default=0.3, ge=0, le=1)
@@ -37,6 +38,7 @@ class RelevanceRequest(BaseModel):
 
 class RankPassagesRequest(BaseModel):
     """Request to rank multiple passages."""
+
     passages: list[str] = Field(..., min_length=1)
     query: str = Field(..., min_length=3)
     top_k: Optional[int] = Field(default=None, ge=1)
@@ -44,12 +46,14 @@ class RankPassagesRequest(BaseModel):
 
 class FocusOrderRequest(BaseModel):
     """Request to compute focus reading order."""
+
     sections: list[dict] = Field(..., min_length=1)
     learning_goal: str = Field(..., min_length=3)
 
 
 class GenerateFlashcardsRequest(BaseModel):
     """Request to generate flashcards."""
+
     text: str = Field(..., min_length=50)
     num_cards: int = Field(default=5, ge=1, le=20)
     difficulty: str = Field(default="intermediate")
@@ -58,17 +62,20 @@ class GenerateFlashcardsRequest(BaseModel):
 
 class ReviewCardRequest(BaseModel):
     """Request to review a flashcard."""
+
     card_id: str
     quality: int = Field(..., ge=0, le=5)
 
 
 class StartSessionRequest(BaseModel):
     """Request to start a reading session."""
+
     document_id: str
 
 
 class RecordDwellTimeRequest(BaseModel):
     """Request to record dwell time."""
+
     session_id: str
     section_id: str
     dwell_time_ms: int = Field(..., ge=0)
@@ -76,6 +83,7 @@ class RecordDwellTimeRequest(BaseModel):
 
 class RecordScrollRequest(BaseModel):
     """Request to record scroll position."""
+
     session_id: str
     scroll_depth: float = Field(..., ge=0, le=1)
     section_id: Optional[str] = None
@@ -83,6 +91,7 @@ class RecordScrollRequest(BaseModel):
 
 class RecordInteractionRequest(BaseModel):
     """Request to record an interaction."""
+
     session_id: str
     interaction_type: str
     metadata: Optional[dict] = None
@@ -90,12 +99,14 @@ class RecordInteractionRequest(BaseModel):
 
 class ExportFlashcardsRequest(BaseModel):
     """Request to export flashcards."""
+
     flashcards: list[dict]
     format: str = Field(default="json")
     title: str = Field(default="Unfold Flashcards")
 
 
 # ============== Relevance Scoring ==============
+
 
 @router.post("/relevance/score")
 async def score_relevance(
@@ -150,6 +161,7 @@ async def compute_focus_order(
 
 # ============== Flashcard Generation ==============
 
+
 @router.post("/flashcards/generate")
 async def generate_flashcards(
     request: GenerateFlashcardsRequest,
@@ -186,6 +198,7 @@ async def generate_cloze_deletions(
 
 
 # ============== Spaced Repetition ==============
+
 
 @router.post("/flashcards/add")
 async def add_flashcard_to_scheduler(
@@ -298,6 +311,7 @@ async def get_study_stats(current_user: CurrentUser):
 
 
 # ============== Engagement Tracking ==============
+
 
 @router.post("/engagement/session/start")
 async def start_reading_session(
@@ -466,6 +480,7 @@ async def get_reading_recommendations(
 
 # ============== Export ==============
 
+
 @router.post("/export/flashcards")
 async def export_flashcards(
     request: ExportFlashcardsRequest,
@@ -497,9 +512,15 @@ async def export_flashcards(
         "anki_csv": export_service.export_to_anki_csv,
         "anki_txt": export_service.export_to_anki_txt,
         "anki_json": lambda fc: export_service.export_to_anki_json(fc, request.title),
-        "obsidian_sr": lambda fc: export_service.export_to_obsidian_markdown(fc, request.title),
-        "obsidian_callout": lambda fc: export_service.export_to_obsidian_callout(fc, request.title),
-        "markdown_table": lambda fc: export_service.export_to_markdown_table(fc, request.title),
+        "obsidian_sr": lambda fc: export_service.export_to_obsidian_markdown(
+            fc, request.title
+        ),
+        "obsidian_callout": lambda fc: export_service.export_to_obsidian_callout(
+            fc, request.title
+        ),
+        "markdown_table": lambda fc: export_service.export_to_markdown_table(
+            fc, request.title
+        ),
     }
 
     if request.format not in format_handlers:

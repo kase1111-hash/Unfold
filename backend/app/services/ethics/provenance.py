@@ -14,6 +14,7 @@ from enum import Enum
 
 class ProvenanceAction(str, Enum):
     """Types of provenance actions."""
+
     CREATED = "created"
     MODIFIED = "modified"
     IMPORTED = "imported"
@@ -24,6 +25,7 @@ class ProvenanceAction(str, Enum):
 
 class ValidationStatus(str, Enum):
     """Document validation status."""
+
     VERIFIED = "verified"
     UNVERIFIED = "unverified"
     INVALID = "invalid"
@@ -33,6 +35,7 @@ class ValidationStatus(str, Enum):
 @dataclass
 class ProvenanceAssertion:
     """A single provenance assertion/claim."""
+
     assertion_id: str
     action: ProvenanceAction
     actor: str  # User ID or system component
@@ -54,6 +57,7 @@ class ProvenanceAssertion:
 @dataclass
 class ContentCredential:
     """C2PA-style content credential for a document."""
+
     credential_id: str
     document_id: str
     content_hash: str  # SHA-256 hash of content
@@ -97,6 +101,7 @@ class ContentCredential:
 @dataclass
 class ProvenanceManifest:
     """Complete C2PA-style manifest for a document."""
+
     manifest_id: str
     document_id: str
     title: str
@@ -217,7 +222,10 @@ class ProvenanceService:
         if current_hash == credential.content_hash:
             return True, "Content integrity verified"
         else:
-            return False, f"Content hash mismatch: expected {credential.content_hash[:16]}..., got {current_hash[:16]}..."
+            return (
+                False,
+                f"Content hash mismatch: expected {credential.content_hash[:16]}..., got {current_hash[:16]}...",
+            )
 
     def add_assertion(
         self,
@@ -356,7 +364,9 @@ class ProvenanceService:
         """Get a manifest by ID."""
         return self._manifests.get(manifest_id)
 
-    def get_manifest_by_document(self, document_id: str) -> Optional[ProvenanceManifest]:
+    def get_manifest_by_document(
+        self, document_id: str
+    ) -> Optional[ProvenanceManifest]:
         """Get a manifest by document ID."""
         for manifest in self._manifests.values():
             if manifest.document_id == document_id:

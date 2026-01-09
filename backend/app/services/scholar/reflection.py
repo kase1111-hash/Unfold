@@ -13,6 +13,7 @@ import difflib
 
 class ReflectionType(str, Enum):
     """Types of reflection entries."""
+
     INITIAL_READING = "initial_reading"
     RE_READING = "re_reading"
     REVIEW = "review"
@@ -24,6 +25,7 @@ class ReflectionType(str, Enum):
 @dataclass
 class ReadingSnapshot:
     """Captures user's understanding at a point in time."""
+
     snapshot_id: str
     user_id: str
     document_id: str
@@ -39,7 +41,9 @@ class ReadingSnapshot:
     summary: Optional[str] = None  # User's summary of understanding
     key_takeaways: list[str] = field(default_factory=list)
     questions: list[str] = field(default_factory=list)  # Unanswered questions
-    connections: list[str] = field(default_factory=list)  # Connections to other knowledge
+    connections: list[str] = field(
+        default_factory=list
+    )  # Connections to other knowledge
 
     # Highlighted sections
     highlights: list[dict] = field(default_factory=list)  # [{text, note, position}]
@@ -76,6 +80,7 @@ class ReadingSnapshot:
 @dataclass
 class ReflectionDiff:
     """Represents changes between two snapshots."""
+
     from_snapshot_id: str
     to_snapshot_id: str
     time_between: float  # Hours between snapshots
@@ -135,7 +140,9 @@ class ReflectionEngine:
     """
 
     def __init__(self):
-        self._snapshots: dict[str, list[ReadingSnapshot]] = {}  # user_id+doc_id -> snapshots
+        self._snapshots: dict[str, list[ReadingSnapshot]] = (
+            {}
+        )  # user_id+doc_id -> snapshots
 
     def _get_key(self, user_id: str, document_id: str) -> str:
         """Generate storage key for user-document pair."""
@@ -179,7 +186,9 @@ class ReflectionEngine:
         key = self._get_key(user_id, document_id)
 
         # Generate snapshot ID
-        snapshot_id = f"snap_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{user_id[:6]}"
+        snapshot_id = (
+            f"snap_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{user_id[:6]}"
+        )
 
         # Estimate comprehension based on engagement signals
         comprehension_score = self._estimate_comprehension(
@@ -281,7 +290,9 @@ class ReflectionEngine:
 
         # Calculate changes
         complexity_change = snapshot2.complexity_level - snapshot1.complexity_level
-        comprehension_change = snapshot2.comprehension_score - snapshot1.comprehension_score
+        comprehension_change = (
+            snapshot2.comprehension_score - snapshot1.comprehension_score
+        )
         total_time_added = snapshot2.time_spent_minutes
 
         # Compare summaries
@@ -447,9 +458,7 @@ class ReflectionEngine:
                 "What parts are still unclear? Try summarizing in your own words."
             )
         else:
-            prompts.append(
-                "How does this connect to what you already knew?"
-            )
+            prompts.append("How does this connect to what you already knew?")
 
         # Based on time between reads
         if len(snapshots) >= 2:

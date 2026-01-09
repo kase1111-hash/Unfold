@@ -11,7 +11,6 @@ operation, with fallback to cloud APIs when configured.
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 from uuid import uuid4
 
 from app.db.neo4j import (
@@ -30,8 +29,8 @@ from app.models.graph import (
     NodeType,
     RelationType,
 )
-from app.services.graph.extractor import ExtractedEntity, get_entity_extractor
-from app.services.graph.relations import ExtractedRelation, get_relation_extractor
+from app.services.graph.extractor import get_entity_extractor
+from app.services.graph.relations import get_relation_extractor
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +70,9 @@ class KnowledgeGraphBuilder:
         )
         self.use_llm_relations = use_llm_relations
         self.use_integrated = use_integrated
-        logger.info(f"[KnowledgeGraphBuilder] Initialized with integrated={use_integrated}, llm_provider={llm_provider}")
+        logger.info(
+            f"[KnowledgeGraphBuilder] Initialized with integrated={use_integrated}, llm_provider={llm_provider}"
+        )
 
     async def build_from_text(
         self,
@@ -139,39 +140,55 @@ class KnowledgeGraphBuilder:
                     result.nodes_created += 1
 
                 except Exception as e:
-                    result.errors.append(f"Failed to create node for '{entity.text}': {e}")
+                    result.errors.append(
+                        f"Failed to create node for '{entity.text}': {e}"
+                    )
 
         # Step 3: Extract and create relations
         if extract_relations and len(entities) >= 2:
             try:
                 # Integrated pipeline uses synchronous extraction
                 if self.use_integrated:
-                    relations = self.relation_extractor.extract_relations(text, entities)
+                    relations = self.relation_extractor.extract_relations(
+                        text, entities
+                    )
                 elif self.use_llm_relations:
                     relations = await self.relation_extractor.extract_relations(
                         text, entities
                     )
                 else:
-                    relations = self.relation_extractor.extract_relations(text, entities)
+                    relations = self.relation_extractor.extract_relations(
+                        text, entities
+                    )
 
                 logger.info(f"Extracted {len(relations)} relations from text")
 
                 async with get_neo4j_session_context() as session:
                     for relation in relations:
                         try:
-                            source_id = entity_to_node_id.get(relation.source_text.lower())
-                            target_id = entity_to_node_id.get(relation.target_text.lower())
+                            source_id = entity_to_node_id.get(
+                                relation.source_text.lower()
+                            )
+                            target_id = entity_to_node_id.get(
+                                relation.target_text.lower()
+                            )
 
                             if not source_id or not target_id:
                                 # Try partial matching for multi-word entities
                                 if not source_id:
                                     for key in entity_to_node_id:
-                                        if relation.source_text.lower() in key or key in relation.source_text.lower():
+                                        if (
+                                            relation.source_text.lower() in key
+                                            or key in relation.source_text.lower()
+                                        ):
                                             source_id = entity_to_node_id[key]
                                             break
                                 if not target_id:
                                     for key in entity_to_node_id:
-                                        if relation.target_text.lower() in key or key in relation.target_text.lower():
+                                        if (
+                                            relation.target_text.lower() in key
+                                            or key in relation.target_text.lower()
+                                        ):
                                             target_id = entity_to_node_id[key]
                                             break
 
@@ -181,7 +198,7 @@ class KnowledgeGraphBuilder:
                             # Handle relation_type as either enum or string
                             rel_type_value = (
                                 relation.relation_type.value
-                                if hasattr(relation.relation_type, 'value')
+                                if hasattr(relation.relation_type, "value")
                                 else str(relation.relation_type)
                             )
 
@@ -193,8 +210,12 @@ class KnowledgeGraphBuilder:
                                 properties={
                                     "confidence": relation.confidence,
                                     "context": relation.context or "",
-                                    "extraction_method": getattr(relation, 'extraction_method', 'unknown'),
-                                    "created_at": datetime.now(timezone.utc).isoformat(),
+                                    "extraction_method": getattr(
+                                        relation, "extraction_method", "unknown"
+                                    ),
+                                    "created_at": datetime.now(
+                                        timezone.utc
+                                    ).isoformat(),
                                 },
                             )
 
@@ -229,7 +250,7 @@ class KnowledgeGraphBuilder:
         node_id = f"node_{uuid4().hex[:12]}"
 
         async with get_neo4j_session_context() as session:
-            result = await create_node(
+            await create_node(
                 session,
                 node_type=node_data.type.value,
                 properties={
@@ -328,8 +349,19 @@ class KnowledgeGraphBuilder:
             confidence=props.get("confidence", 1.0),
             external_links=props.get("external_links", {}),
             metadata={
-                k: v for k, v in props.items()
-                if k not in {"node_id", "label", "type", "description", "source_doc_id", "embedding", "confidence", "external_links"}
+                k: v
+                for k, v in props.items()
+                if k
+                not in {
+                    "node_id",
+                    "label",
+                    "type",
+                    "description",
+                    "source_doc_id",
+                    "embedding",
+                    "confidence",
+                    "external_links",
+                }
             },
         )
 

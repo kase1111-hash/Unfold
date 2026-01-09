@@ -11,7 +11,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.postgres import Base
@@ -50,8 +50,12 @@ class FlashcardORM(Base):
     easiness: Mapped[float] = mapped_column(Float, default=2.5, nullable=False)
     interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     repetitions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    next_review: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_reviewed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    next_review: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    last_reviewed: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -142,7 +146,9 @@ class ReflectionSnapshotORM(Base):
     nodes_deleted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     connections_made: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
-    insights: Mapped[list[str]] = mapped_column(ARRAY(String), default=list, nullable=False)
+    insights: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

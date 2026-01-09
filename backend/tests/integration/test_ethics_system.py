@@ -3,7 +3,6 @@ Integration tests for the Ethics system.
 Tests provenance, bias auditing, privacy compliance, and analytics.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -16,7 +15,9 @@ class TestProvenanceTracking:
             "document_id": "doc_123",
             "content": "Test document content",
         }
-        response = client.post(f"{api_prefix}/ethics/provenance/create", json=request_data)
+        response = client.post(
+            f"{api_prefix}/ethics/provenance/create", json=request_data
+        )
         assert response.status_code == 401
 
     def test_create_provenance_with_auth(
@@ -49,7 +50,9 @@ class TestProvenanceTracking:
             "credential_id": "cred_123",
             "content": "Test content",
         }
-        response = client.post(f"{api_prefix}/ethics/provenance/verify", json=request_data)
+        response = client.post(
+            f"{api_prefix}/ethics/provenance/verify", json=request_data
+        )
         assert response.status_code == 401
 
     def test_verify_provenance_with_auth(
@@ -95,7 +98,11 @@ class TestProvenanceTracking:
         assert response.status_code in [200, 401, 404]
 
     def test_get_document_provenance(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting all provenance for a document."""
         response = client.get(
@@ -215,7 +222,9 @@ class TestPrivacyCompliance:
             "consent_type": "analytics",
             "granted": True,
         }
-        response = client.post(f"{api_prefix}/ethics/privacy/consent", json=request_data)
+        response = client.post(
+            f"{api_prefix}/ethics/privacy/consent", json=request_data
+        )
         assert response.status_code == 401
 
     def test_record_consent_with_auth(
@@ -315,7 +324,9 @@ class TestEthicsAnalytics:
             "operation_type": "ai_summary",
             "purpose": "Generated document summary",
         }
-        response = client.post(f"{api_prefix}/ethics/analytics/operation", json=request_data)
+        response = client.post(
+            f"{api_prefix}/ethics/analytics/operation", json=request_data
+        )
         assert response.status_code == 401
 
     def test_record_operation_with_auth(
@@ -436,7 +447,9 @@ class TestDifferentialPrivacy:
 
         # Add noise to a value
         original = 100.0
-        noisy_values = [dp.add_laplace_noise(original, sensitivity=1.0) for _ in range(100)]
+        noisy_values = [
+            dp.add_laplace_noise(original, sensitivity=1.0) for _ in range(100)
+        ]
 
         # Values should be distributed around the original
         mean_noisy = sum(noisy_values) / len(noisy_values)

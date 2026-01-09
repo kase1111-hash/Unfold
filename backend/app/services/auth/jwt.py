@@ -169,7 +169,9 @@ def verify_token(token: str, token_type: str = "access") -> TokenPayload:
     payload = decode_token(token)
 
     if payload.type != token_type:
-        raise TokenError(f"Invalid token type: expected {token_type}, got {payload.type}")
+        raise TokenError(
+            f"Invalid token type: expected {token_type}, got {payload.type}"
+        )
 
     # Check expiration
     if payload.exp < datetime.now(timezone.utc):

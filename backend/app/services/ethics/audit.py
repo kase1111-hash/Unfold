@@ -12,6 +12,7 @@ from enum import Enum
 # Optional imports for sentiment analysis
 try:
     from transformers import pipeline
+
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
@@ -20,6 +21,7 @@ except ImportError:
 
 class BiasCategory(str, Enum):
     """Categories of potential bias."""
+
     GENDER = "gender"
     RACIAL = "racial"
     POLITICAL = "political"
@@ -32,6 +34,7 @@ class BiasCategory(str, Enum):
 
 class SeverityLevel(str, Enum):
     """Severity levels for bias findings."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -41,6 +44,7 @@ class SeverityLevel(str, Enum):
 @dataclass
 class SentimentResult:
     """Result of sentiment analysis."""
+
     label: str  # positive, negative, neutral
     score: float  # Confidence score 0-1
     text_sample: Optional[str] = None
@@ -49,6 +53,7 @@ class SentimentResult:
 @dataclass
 class BiasFinding:
     """A single bias finding from audit."""
+
     finding_id: str
     category: BiasCategory
     severity: SeverityLevel
@@ -72,6 +77,7 @@ class BiasFinding:
 @dataclass
 class InclusivityMetrics:
     """Language inclusivity metrics."""
+
     overall_score: float  # 0-100
     gender_neutral_score: float
     accessible_language_score: float
@@ -95,6 +101,7 @@ class InclusivityMetrics:
 @dataclass
 class BiasAuditReport:
     """Complete bias audit report for a document."""
+
     report_id: str
     document_id: str
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -122,18 +129,30 @@ class BiasAuditReport:
             "document_id": self.document_id,
             "created_at": self.created_at.isoformat(),
             "sentiment": {
-                "overall": {
-                    "label": self.overall_sentiment.label,
-                    "score": round(self.overall_sentiment.score, 3),
-                } if self.overall_sentiment else None,
+                "overall": (
+                    {
+                        "label": self.overall_sentiment.label,
+                        "score": round(self.overall_sentiment.score, 3),
+                    }
+                    if self.overall_sentiment
+                    else None
+                ),
                 "section_count": len(self.section_sentiments),
             },
             "findings": [f.to_dict() for f in self.findings],
             "findings_by_severity": {
-                "critical": len([f for f in self.findings if f.severity == SeverityLevel.CRITICAL]),
-                "high": len([f for f in self.findings if f.severity == SeverityLevel.HIGH]),
-                "medium": len([f for f in self.findings if f.severity == SeverityLevel.MEDIUM]),
-                "low": len([f for f in self.findings if f.severity == SeverityLevel.LOW]),
+                "critical": len(
+                    [f for f in self.findings if f.severity == SeverityLevel.CRITICAL]
+                ),
+                "high": len(
+                    [f for f in self.findings if f.severity == SeverityLevel.HIGH]
+                ),
+                "medium": len(
+                    [f for f in self.findings if f.severity == SeverityLevel.MEDIUM]
+                ),
+                "low": len(
+                    [f for f in self.findings if f.severity == SeverityLevel.LOW]
+                ),
             },
             "inclusivity": self.inclusivity.to_dict() if self.inclusivity else None,
             "scores": {
@@ -164,7 +183,6 @@ class BiasAuditor:
         "policeman": "police officer",
         "chairman": "chairperson",
         "businessman": "businessperson",
-        "mankind": "humanity",
         "man-hours": "person-hours",
         "manpower": "workforce",
     }
@@ -172,27 +190,50 @@ class BiasAuditor:
     # Words/phrases that may indicate bias
     BIAS_INDICATORS = {
         BiasCategory.GENDER: [
-            r"\bmen are\b", r"\bwomen are\b", r"\bgirls are\b", r"\bboys are\b",
-            r"\btypically male\b", r"\btypically female\b",
+            r"\bmen are\b",
+            r"\bwomen are\b",
+            r"\bgirls are\b",
+            r"\bboys are\b",
+            r"\btypically male\b",
+            r"\btypically female\b",
         ],
         BiasCategory.RACIAL: [
-            r"\bill?egals?\b", r"\balien\b", r"\bexotic\b",
+            r"\bill?egals?\b",
+            r"\balien\b",
+            r"\bexotic\b",
         ],
         BiasCategory.AGEISM: [
-            r"\bold people are\b", r"\byoung people are\b", r"\belderly\b",
-            r"\bsenile\b", r"\bover the hill\b",
+            r"\bold people are\b",
+            r"\byoung people are\b",
+            r"\belderly\b",
+            r"\bsenile\b",
+            r"\bover the hill\b",
         ],
         BiasCategory.ABLEISM: [
-            r"\bcrippled?\b", r"\blame\b", r"\bhandicapped\b",
-            r"\bsuffering from\b", r"\bconfined to\b", r"\bwheelchair.?bound\b",
+            r"\bcrippled?\b",
+            r"\blame\b",
+            r"\bhandicapped\b",
+            r"\bsuffering from\b",
+            r"\bconfined to\b",
+            r"\bwheelchair.?bound\b",
         ],
     }
 
     # Complex/jargon terms
     COMPLEX_TERMS = [
-        "paradigm", "synergy", "leverage", "utilize", "operationalize",
-        "methodology", "heretofore", "aforementioned", "notwithstanding",
-        "pursuant", "vis-à-vis", "ergo", "ipso facto",
+        "paradigm",
+        "synergy",
+        "leverage",
+        "utilize",
+        "operationalize",
+        "methodology",
+        "heretofore",
+        "aforementioned",
+        "notwithstanding",
+        "pursuant",
+        "vis-à-vis",
+        "ergo",
+        "ipso facto",
     ]
 
     def __init__(self):
@@ -236,14 +277,30 @@ class BiasAuditor:
                 return SentimentResult(
                     label=result["label"].lower(),
                     score=result["score"],
-                    text_sample=truncated[:100] + "..." if len(truncated) > 100 else truncated,
+                    text_sample=(
+                        truncated[:100] + "..." if len(truncated) > 100 else truncated
+                    ),
                 )
             except Exception:
                 pass
 
         # Fallback: Simple keyword-based sentiment
-        positive_words = ["good", "great", "excellent", "positive", "beneficial", "helpful"]
-        negative_words = ["bad", "poor", "negative", "harmful", "problematic", "concerning"]
+        positive_words = [
+            "good",
+            "great",
+            "excellent",
+            "positive",
+            "beneficial",
+            "helpful",
+        ]
+        negative_words = [
+            "bad",
+            "poor",
+            "negative",
+            "harmful",
+            "problematic",
+            "concerning",
+        ]
 
         text_lower = text.lower()
         positive_count = sum(1 for word in positive_words if word in text_lower)
@@ -280,15 +337,21 @@ class BiasAuditor:
         for term, neutral in self.GENDERED_TERMS.items():
             pattern = rf"\b{re.escape(term)}\b"
             for match in re.finditer(pattern, text, re.IGNORECASE):
-                findings.append(BiasFinding(
-                    finding_id=self._generate_finding_id(),
-                    category=BiasCategory.GENDER,
-                    severity=SeverityLevel.LOW,
-                    description=f"Gendered term '{match.group()}' could be replaced with gender-neutral alternative",
-                    text_excerpt=text[max(0, match.start() - 30):match.end() + 30],
-                    position=(match.start(), match.end()),
-                    suggestions=[f"Consider using '{neutral}' instead of '{match.group()}'"],
-                ))
+                findings.append(
+                    BiasFinding(
+                        finding_id=self._generate_finding_id(),
+                        category=BiasCategory.GENDER,
+                        severity=SeverityLevel.LOW,
+                        description=f"Gendered term '{match.group()}' could be replaced with gender-neutral alternative",
+                        text_excerpt=text[
+                            max(0, match.start() - 30) : match.end() + 30
+                        ],
+                        position=(match.start(), match.end()),
+                        suggestions=[
+                            f"Consider using '{neutral}' instead of '{match.group()}'"
+                        ],
+                    )
+                )
 
         return findings
 
@@ -307,15 +370,19 @@ class BiasAuditor:
         for category, patterns in self.BIAS_INDICATORS.items():
             for pattern in patterns:
                 for match in re.finditer(pattern, text, re.IGNORECASE):
-                    findings.append(BiasFinding(
-                        finding_id=self._generate_finding_id(),
-                        category=category,
-                        severity=SeverityLevel.MEDIUM,
-                        description=f"Potentially biased language pattern detected: '{match.group()}'",
-                        text_excerpt=text[max(0, match.start() - 50):match.end() + 50],
-                        position=(match.start(), match.end()),
-                        suggestions=["Review this passage for unintentional bias"],
-                    ))
+                    findings.append(
+                        BiasFinding(
+                            finding_id=self._generate_finding_id(),
+                            category=category,
+                            severity=SeverityLevel.MEDIUM,
+                            description=f"Potentially biased language pattern detected: '{match.group()}'",
+                            text_excerpt=text[
+                                max(0, match.start() - 50) : match.end() + 50
+                            ],
+                            position=(match.start(), match.end()),
+                            suggestions=["Review this passage for unintentional bias"],
+                        )
+                    )
 
         return findings
 
@@ -329,7 +396,7 @@ class BiasAuditor:
         Returns:
             InclusivityMetrics
         """
-        sentences = re.split(r'[.!?]+', text)
+        sentences = re.split(r"[.!?]+", text)
         sentences = [s.strip() for s in sentences if s.strip()]
         words = text.split()
 
@@ -339,7 +406,9 @@ class BiasAuditor:
             gendered_count += len(re.findall(rf"\b{term}\b", text, re.IGNORECASE))
 
         total_words = len(words)
-        gender_neutral_score = max(0, 100 - (gendered_count / max(1, total_words)) * 1000)
+        gender_neutral_score = max(
+            0, 100 - (gendered_count / max(1, total_words)) * 1000
+        )
 
         # Complex term count
         complex_count = 0
@@ -351,10 +420,14 @@ class BiasAuditor:
         accessible_score = max(0, 100 - (avg_word_length - 4) * 10 - complex_count * 2)
 
         # Average sentence length
-        avg_sentence_length = sum(len(s.split()) for s in sentences) / max(1, len(sentences))
+        avg_sentence_length = sum(len(s.split()) for s in sentences) / max(
+            1, len(sentences)
+        )
 
         # Passive voice detection (simple heuristic)
-        passive_patterns = re.findall(r"\b(was|were|been|being|is|are)\s+\w+ed\b", text, re.IGNORECASE)
+        passive_patterns = re.findall(
+            r"\b(was|were|been|being|is|are)\s+\w+ed\b", text, re.IGNORECASE
+        )
         passive_ratio = len(passive_patterns) / max(1, len(sentences))
 
         # Reading level estimation
@@ -367,9 +440,9 @@ class BiasAuditor:
 
         # Overall score
         overall_score = (
-            gender_neutral_score * 0.3 +
-            accessible_score * 0.4 +
-            max(0, 100 - passive_ratio * 50) * 0.3
+            gender_neutral_score * 0.3
+            + accessible_score * 0.4
+            + max(0, 100 - passive_ratio * 50) * 0.3
         )
 
         return InclusivityMetrics(
@@ -415,7 +488,11 @@ class BiasAuditor:
             )
 
         # Severity-based recommendations
-        high_severity = [f for f in findings if f.severity in [SeverityLevel.HIGH, SeverityLevel.CRITICAL]]
+        high_severity = [
+            f
+            for f in findings
+            if f.severity in [SeverityLevel.HIGH, SeverityLevel.CRITICAL]
+        ]
         if high_severity:
             recommendations.append(
                 f"Address {len(high_severity)} high-severity finding(s) that may significantly impact reader perception."
@@ -440,7 +517,9 @@ class BiasAuditor:
             )
 
         if not recommendations:
-            recommendations.append("No significant issues detected. Content appears well-balanced and inclusive.")
+            recommendations.append(
+                "No significant issues detected. Content appears well-balanced and inclusive."
+            )
 
         return recommendations
 

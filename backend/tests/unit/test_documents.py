@@ -1,6 +1,5 @@
 """Tests for document endpoints."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 

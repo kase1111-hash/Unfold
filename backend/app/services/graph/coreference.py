@@ -13,8 +13,8 @@ Supports multiple resolution strategies:
 
 import logging
 import sys
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple, Set
+from dataclasses import dataclass
+from typing import List, Dict, Optional, Tuple
 from enum import Enum
 import re
 
@@ -23,11 +23,13 @@ logger = logging.getLogger(__name__)
 
 class CoreferenceError(Exception):
     """Exception raised for coreference resolution errors."""
+
     pass
 
 
 class ReferenceType(Enum):
     """Types of referring expressions."""
+
     PRONOUN_IT = "it"
     PRONOUN_THEY = "they"
     PRONOUN_THIS = "this"
@@ -41,6 +43,7 @@ class ReferenceType(Enum):
 @dataclass
 class Reference:
     """A referring expression that needs resolution."""
+
     text: str
     ref_type: ReferenceType
     sentence_idx: int
@@ -53,6 +56,7 @@ class Reference:
 @dataclass
 class Entity:
     """An entity that can be an antecedent."""
+
     text: str
     entity_type: str
     sentence_idx: int
@@ -64,6 +68,7 @@ class Entity:
 @dataclass
 class ResolvedText:
     """Text with coreferences resolved."""
+
     original_text: str
     resolved_text: str
     resolutions: List[Tuple[str, str]]  # (reference, antecedent) pairs
@@ -71,44 +76,44 @@ class ResolvedText:
 
 # Patterns for detecting referring expressions
 PRONOUN_PATTERNS = {
-    ReferenceType.PRONOUN_IT: r'\b[Ii]t\b',
-    ReferenceType.PRONOUN_THEY: r'\b[Tt]hey\b',
-    ReferenceType.PRONOUN_THIS: r'\b[Tt]his\b(?!\s+\w)',  # "this" alone, not "this model"
-    ReferenceType.PRONOUN_THAT: r'\b[Tt]hat\b(?!\s+\w)',
-    ReferenceType.PRONOUN_THESE: r'\b[Tt]hese\b(?!\s+\w)',
-    ReferenceType.PRONOUN_THOSE: r'\b[Tt]hose\b(?!\s+\w)',
+    ReferenceType.PRONOUN_IT: r"\b[Ii]t\b",
+    ReferenceType.PRONOUN_THEY: r"\b[Tt]hey\b",
+    ReferenceType.PRONOUN_THIS: r"\b[Tt]his\b(?!\s+\w)",  # "this" alone, not "this model"
+    ReferenceType.PRONOUN_THAT: r"\b[Tt]hat\b(?!\s+\w)",
+    ReferenceType.PRONOUN_THESE: r"\b[Tt]hese\b(?!\s+\w)",
+    ReferenceType.PRONOUN_THOSE: r"\b[Tt]hose\b(?!\s+\w)",
 }
 
 # Definite and demonstrative descriptions
 DESCRIPTION_PATTERNS = {
     ReferenceType.DEFINITE_DESC: [
-        r'[Tt]he\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)',
-        r'[Tt]he\s+(transformer|attention|mechanism|layer|module)',
+        r"[Tt]he\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)",
+        r"[Tt]he\s+(transformer|attention|mechanism|layer|module)",
     ],
     ReferenceType.DEMONSTRATIVE_DESC: [
-        r'[Tt]his\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)',
-        r'[Tt]hat\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)',
-        r'[Tt]hese\s+(models|systems|architectures|networks|methods|approaches|algorithms|frameworks|techniques)',
+        r"[Tt]his\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)",
+        r"[Tt]hat\s+(model|system|architecture|network|method|approach|algorithm|framework|technique)",
+        r"[Tt]hese\s+(models|systems|architectures|networks|methods|approaches|algorithms|frameworks|techniques)",
     ],
 }
 
 # Entity type compatibility for resolution
 # Maps reference type patterns to compatible entity types
 TYPE_COMPATIBILITY = {
-    'model': {'TECHNOLOGY', 'MODEL', 'SYSTEM'},
-    'system': {'TECHNOLOGY', 'MODEL', 'SYSTEM'},
-    'architecture': {'TECHNOLOGY', 'MODEL', 'ARCHITECTURE'},
-    'network': {'TECHNOLOGY', 'MODEL', 'NETWORK'},
-    'method': {'METHOD', 'TECHNIQUE', 'ALGORITHM'},
-    'approach': {'METHOD', 'TECHNIQUE', 'TECHNOLOGY'},
-    'algorithm': {'METHOD', 'ALGORITHM'},
-    'framework': {'TECHNOLOGY', 'FRAMEWORK'},
-    'technique': {'METHOD', 'TECHNIQUE'},
-    'transformer': {'TECHNOLOGY', 'MODEL'},
-    'attention': {'METHOD', 'MECHANISM'},
-    'mechanism': {'METHOD', 'MECHANISM'},
-    'layer': {'COMPONENT', 'MODULE'},
-    'module': {'COMPONENT', 'MODULE'},
+    "model": {"TECHNOLOGY", "MODEL", "SYSTEM"},
+    "system": {"TECHNOLOGY", "MODEL", "SYSTEM"},
+    "architecture": {"TECHNOLOGY", "MODEL", "ARCHITECTURE"},
+    "network": {"TECHNOLOGY", "MODEL", "NETWORK"},
+    "method": {"METHOD", "TECHNIQUE", "ALGORITHM"},
+    "approach": {"METHOD", "TECHNIQUE", "TECHNOLOGY"},
+    "algorithm": {"METHOD", "ALGORITHM"},
+    "framework": {"TECHNOLOGY", "FRAMEWORK"},
+    "technique": {"METHOD", "TECHNIQUE"},
+    "transformer": {"TECHNOLOGY", "MODEL"},
+    "attention": {"METHOD", "MECHANISM"},
+    "mechanism": {"METHOD", "MECHANISM"},
+    "layer": {"COMPONENT", "MODULE"},
+    "module": {"COMPONENT", "MODULE"},
 }
 
 
@@ -164,26 +169,30 @@ class CoreferenceResolver:
         for ref_type, pattern in PRONOUN_PATTERNS.items():
             for match in re.finditer(pattern, text):
                 sent_idx = self._get_sentence_index(match.start(), sent_offsets)
-                references.append(Reference(
-                    text=match.group(),
-                    ref_type=ref_type,
-                    sentence_idx=sent_idx,
-                    char_start=match.start(),
-                    char_end=match.end()
-                ))
+                references.append(
+                    Reference(
+                        text=match.group(),
+                        ref_type=ref_type,
+                        sentence_idx=sent_idx,
+                        char_start=match.start(),
+                        char_end=match.end(),
+                    )
+                )
 
         # Find definite descriptions
         for ref_type, patterns in DESCRIPTION_PATTERNS.items():
             for pattern in patterns:
                 for match in re.finditer(pattern, text):
                     sent_idx = self._get_sentence_index(match.start(), sent_offsets)
-                    references.append(Reference(
-                        text=match.group(),
-                        ref_type=ref_type,
-                        sentence_idx=sent_idx,
-                        char_start=match.start(),
-                        char_end=match.end()
-                    ))
+                    references.append(
+                        Reference(
+                            text=match.group(),
+                            ref_type=ref_type,
+                            sentence_idx=sent_idx,
+                            char_start=match.start(),
+                            char_end=match.end(),
+                        )
+                    )
 
         # Sort by position
         references.sort(key=lambda r: r.char_start)
@@ -197,7 +206,7 @@ class CoreferenceResolver:
         text_lower = text.lower()
 
         for ent in entities:
-            ent_text = ent['text']
+            ent_text = ent["text"]
             ent_lower = ent_text.lower()
 
             # Find all occurrences
@@ -212,14 +221,16 @@ class CoreferenceResolver:
                 # Calculate salience based on position and frequency
                 salience = 1.0 - (pos / len(text)) * 0.3  # Earlier = more salient
 
-                result.append(Entity(
-                    text=ent_text,
-                    entity_type=ent.get('type', 'UNKNOWN'),
-                    sentence_idx=sent_idx,
-                    char_start=pos,
-                    char_end=pos + len(ent_text),
-                    salience=salience
-                ))
+                result.append(
+                    Entity(
+                        text=ent_text,
+                        entity_type=ent.get("type", "UNKNOWN"),
+                        sentence_idx=sent_idx,
+                        char_start=pos,
+                        char_end=pos + len(ent_text),
+                        salience=salience,
+                    )
+                )
 
                 start = pos + 1
 
@@ -298,7 +309,10 @@ class CoreferenceResolver:
                 resolved_text = text
 
             # Report completion
-            self._log(f"Completed: {resolved_count} resolved, {failed_count} unresolved", "success")
+            self._log(
+                f"Completed: {resolved_count} resolved, {failed_count} unresolved",
+                "success",
+            )
             return ResolvedText(text, resolved_text, resolutions)
 
         except CoreferenceError:
@@ -311,7 +325,7 @@ class CoreferenceResolver:
         self,
         ref: Reference,
         entities: List[Entity],
-        prior_resolutions: List[Tuple[str, str]]
+        prior_resolutions: List[Tuple[str, str]],
     ) -> Optional[Entity]:
         """Find the best antecedent for a reference."""
         candidates = []
@@ -330,7 +344,9 @@ class CoreferenceResolver:
             return None
 
         # Sort by score (descending) then by recency (closer = better)
-        candidates.sort(key=lambda x: (x[1], -abs(ref.char_start - x[0].char_end)), reverse=True)
+        candidates.sort(
+            key=lambda x: (x[1], -abs(ref.char_start - x[0].char_end)), reverse=True
+        )
 
         return candidates[0][0]
 
@@ -353,26 +369,40 @@ class CoreferenceResolver:
             score -= 0.1  # Too far
 
         # Type compatibility for descriptions
-        if ref.ref_type in (ReferenceType.DEFINITE_DESC, ReferenceType.DEMONSTRATIVE_DESC):
+        if ref.ref_type in (
+            ReferenceType.DEFINITE_DESC,
+            ReferenceType.DEMONSTRATIVE_DESC,
+        ):
             # Extract the noun from "the model", "this approach", etc.
-            match = re.search(r'(model|system|architecture|network|method|approach|algorithm|framework|technique|transformer|attention|mechanism|layer|module)s?', ref.text.lower())
+            match = re.search(
+                r"(model|system|architecture|network|method|approach|algorithm|framework|technique|transformer|attention|mechanism|layer|module)s?",
+                ref.text.lower(),
+            )
             if match:
                 noun = match.group(1)
                 compatible_types = TYPE_COMPATIBILITY.get(noun, set())
                 if ent.entity_type.upper() in compatible_types:
                     score += 0.4  # Strong type match
-                elif ent.entity_type.upper() in {'TECHNOLOGY', 'MODEL', 'METHOD'}:
+                elif ent.entity_type.upper() in {"TECHNOLOGY", "MODEL", "METHOD"}:
                     score += 0.2  # Weak type match
 
         # For pronouns, prefer recent entities
-        elif ref.ref_type in (ReferenceType.PRONOUN_IT, ReferenceType.PRONOUN_THIS, ReferenceType.PRONOUN_THAT):
+        elif ref.ref_type in (
+            ReferenceType.PRONOUN_IT,
+            ReferenceType.PRONOUN_THIS,
+            ReferenceType.PRONOUN_THAT,
+        ):
             # "it/this/that" usually refers to singular technology/model
-            if ent.entity_type.upper() in {'TECHNOLOGY', 'MODEL', 'METHOD'}:
+            if ent.entity_type.upper() in {"TECHNOLOGY", "MODEL", "METHOD"}:
                 score += 0.3
 
-        elif ref.ref_type in (ReferenceType.PRONOUN_THEY, ReferenceType.PRONOUN_THESE, ReferenceType.PRONOUN_THOSE):
+        elif ref.ref_type in (
+            ReferenceType.PRONOUN_THEY,
+            ReferenceType.PRONOUN_THESE,
+            ReferenceType.PRONOUN_THOSE,
+        ):
             # "they/these/those" might refer to plural or group
-            if ent.entity_type.upper() in {'ORGANIZATION', 'PERSON'}:
+            if ent.entity_type.upper() in {"ORGANIZATION", "PERSON"}:
                 score += 0.2
 
         # Recency bonus
@@ -389,7 +419,10 @@ class CoreferenceResolver:
         base_confidence = 0.5
 
         # Type-based confidence
-        if ref.ref_type in (ReferenceType.DEFINITE_DESC, ReferenceType.DEMONSTRATIVE_DESC):
+        if ref.ref_type in (
+            ReferenceType.DEFINITE_DESC,
+            ReferenceType.DEMONSTRATIVE_DESC,
+        ):
             base_confidence += 0.2  # Descriptions are more reliable
 
         # Distance-based confidence
@@ -411,7 +444,9 @@ class CoreferenceResolver:
         for ref in refs_to_replace:
             # Replace reference with "reference (=antecedent)"
             replacement = f"{ref.text} (={ref.resolved_to})"
-            resolved = resolved[:ref.char_start] + replacement + resolved[ref.char_end:]
+            resolved = (
+                resolved[: ref.char_start] + replacement + resolved[ref.char_end :]
+            )
 
         return resolved
 
@@ -419,27 +454,29 @@ class CoreferenceResolver:
         """Split text into sentences, protecting abbreviations."""
         protected = text
         abbrevs = [
-            (r'\bet al\.', 'ET_AL_PROT'),
-            (r'\bi\.e\.', 'IE_PROT'),
-            (r'\be\.g\.', 'EG_PROT'),
-            (r'\bvs\.', 'VS_PROT'),
+            (r"\bet al\.", "ET_AL_PROT"),
+            (r"\bi\.e\.", "IE_PROT"),
+            (r"\be\.g\.", "EG_PROT"),
+            (r"\bvs\.", "VS_PROT"),
         ]
         for pattern, replacement in abbrevs:
             protected = re.sub(pattern, replacement, protected)
 
-        sentences = re.split(r'(?<=[.!?])\s+', protected)
+        sentences = re.split(r"(?<=[.!?])\s+", protected)
 
         # Restore abbreviations
         restored = []
         for sent in sentences:
             for pattern, replacement in abbrevs:
-                original = pattern.replace(r'\b', '').replace('\\', '')
+                original = pattern.replace(r"\b", "").replace("\\", "")
                 sent = sent.replace(replacement, original)
             restored.append(sent)
 
         return restored
 
-    def _get_sentence_offsets(self, text: str, sentences: List[str]) -> List[Tuple[int, int]]:
+    def _get_sentence_offsets(
+        self, text: str, sentences: List[str]
+    ) -> List[Tuple[int, int]]:
         """Get character offsets for each sentence."""
         offsets = []
         pos = 0
@@ -478,7 +515,9 @@ class CoreferenceEnhancedExtractor:
         self.base_extractor = base_extractor
         self.resolver = resolver or CoreferenceResolver()
 
-    def extract_relations(self, text: str, entities: List[Dict]) -> Tuple[List, ResolvedText]:
+    def extract_relations(
+        self, text: str, entities: List[Dict]
+    ) -> Tuple[List, ResolvedText]:
         """
         Extract relations with coreference resolution.
 
@@ -493,32 +532,38 @@ class CoreferenceEnhancedExtractor:
 
         # Extract relations from resolved text
         if self.base_extractor:
-            relations = self.base_extractor.extract_relations(resolved.resolved_text, augmented_entities)
+            relations = self.base_extractor.extract_relations(
+                resolved.resolved_text, augmented_entities
+            )
         else:
             relations = []
 
         return relations, resolved
 
-    def _augment_entities(self, entities: List[Dict], resolved: ResolvedText) -> List[Dict]:
+    def _augment_entities(
+        self, entities: List[Dict], resolved: ResolvedText
+    ) -> List[Dict]:
         """Add resolved references as additional entity mentions."""
         augmented = list(entities)
 
         for ref_text, antecedent in resolved.resolutions:
             # Find the entity type of the antecedent
-            ent_type = 'UNKNOWN'
+            ent_type = "UNKNOWN"
             for ent in entities:
-                if ent['text'].lower() == antecedent.lower():
-                    ent_type = ent.get('type', 'UNKNOWN')
+                if ent["text"].lower() == antecedent.lower():
+                    ent_type = ent.get("type", "UNKNOWN")
                     break
 
             # Add the reference as an alias
-            augmented.append({
-                'text': f"{ref_text} (={antecedent})",
-                'type': ent_type,
-                'is_resolved_reference': True,
-                'original_reference': ref_text,
-                'resolved_to': antecedent
-            })
+            augmented.append(
+                {
+                    "text": f"{ref_text} (={antecedent})",
+                    "type": ent_type,
+                    "is_resolved_reference": True,
+                    "original_reference": ref_text,
+                    "resolved_to": antecedent,
+                }
+            )
 
         return augmented
 

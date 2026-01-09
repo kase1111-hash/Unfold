@@ -18,7 +18,6 @@ from app.services.scholar import (
     AnnotationType,
     AnnotationVisibility,
     ReflectionType,
-    ZoteroItem,
 )
 
 router = APIRouter(prefix="/scholar", tags=["scholar"])
@@ -26,8 +25,10 @@ router = APIRouter(prefix="/scholar", tags=["scholar"])
 
 # ============== Pydantic Models ==============
 
+
 class CitationTreeRequest(BaseModel):
     """Request to build a citation tree."""
+
     doi: str = Field(..., description="DOI of the root paper")
     max_depth: int = Field(default=2, ge=1, le=3)
     refs_per_level: int = Field(default=10, ge=1, le=50)
@@ -36,6 +37,7 @@ class CitationTreeRequest(BaseModel):
 
 class CitationPathRequest(BaseModel):
     """Request to find citation path between papers."""
+
     source_doi: str
     target_doi: str
     max_hops: int = Field(default=3, ge=1, le=5)
@@ -43,22 +45,26 @@ class CitationPathRequest(BaseModel):
 
 class CredibilityRequest(BaseModel):
     """Request to score paper credibility."""
+
     doi: str
 
 
 class CredibilityCompareRequest(BaseModel):
     """Request to compare multiple papers."""
+
     dois: list[str] = Field(..., min_length=2, max_length=10)
 
 
 class ZoteroExportRequest(BaseModel):
     """Request to export citations to Zotero format."""
+
     items: list[dict]
     format: str = Field(default="ris", pattern="^(ris|bibtex|csl-json)$")
 
 
 class ReflectionSnapshotRequest(BaseModel):
     """Request to create a reading snapshot."""
+
     document_id: str
     reflection_type: str = Field(default="initial_reading")
     complexity_level: int = Field(default=50, ge=0, le=100)
@@ -74,6 +80,7 @@ class ReflectionSnapshotRequest(BaseModel):
 
 class AnnotationCreateRequest(BaseModel):
     """Request to create an annotation."""
+
     document_id: str
     annotation_type: str = Field(default="highlight")
     content: str = ""
@@ -88,6 +95,7 @@ class AnnotationCreateRequest(BaseModel):
 
 class AnnotationUpdateRequest(BaseModel):
     """Request to update an annotation."""
+
     content: Optional[str] = None
     tags: Optional[list[str]] = None
     visibility: Optional[str] = None
@@ -95,10 +103,12 @@ class AnnotationUpdateRequest(BaseModel):
 
 class ReactionRequest(BaseModel):
     """Request to add a reaction."""
+
     emoji: str = Field(..., min_length=1, max_length=10)
 
 
 # ============== Citation Tree ==============
+
 
 @router.post("/citations/tree")
 async def build_citation_tree(
@@ -248,6 +258,7 @@ async def find_citation_path(
 
 # ============== Credibility Scoring ==============
 
+
 @router.post("/credibility/score")
 async def score_credibility(
     request: CredibilityRequest,
@@ -286,6 +297,7 @@ async def compare_credibility(
 
 
 # ============== Zotero Export ==============
+
 
 @router.post("/zotero/export")
 async def export_to_zotero(
@@ -349,6 +361,7 @@ async def preview_zotero_export(
 
 
 # ============== Reflection Engine ==============
+
 
 @router.post("/reflection/snapshot")
 async def create_snapshot(
@@ -433,6 +446,7 @@ async def get_reflection_prompts(
 
 
 # ============== Collaborative Annotations ==============
+
 
 @router.post("/annotations")
 async def create_annotation(

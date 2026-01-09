@@ -15,6 +15,7 @@ import uuid
 
 class ConsentType(str, Enum):
     """Types of user consent."""
+
     ANALYTICS = "analytics"
     PERSONALIZATION = "personalization"
     THIRD_PARTY = "third_party"
@@ -24,6 +25,7 @@ class ConsentType(str, Enum):
 
 class ConsentStatus(str, Enum):
     """Consent status."""
+
     GRANTED = "granted"
     DENIED = "denied"
     PENDING = "pending"
@@ -32,6 +34,7 @@ class ConsentStatus(str, Enum):
 
 class DataCategory(str, Enum):
     """Categories of personal data."""
+
     IDENTIFIER = "identifier"
     CONTACT = "contact"
     BEHAVIORAL = "behavioral"
@@ -45,6 +48,7 @@ class DataCategory(str, Enum):
 @dataclass
 class ConsentRecord:
     """Record of user consent."""
+
     consent_id: str
     user_id: str
     consent_type: ConsentType
@@ -63,13 +67,16 @@ class ConsentRecord:
             "status": self.status.value,
             "granted_at": self.granted_at.isoformat() if self.granted_at else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
-            "withdrawn_at": self.withdrawn_at.isoformat() if self.withdrawn_at else None,
+            "withdrawn_at": (
+                self.withdrawn_at.isoformat() if self.withdrawn_at else None
+            ),
         }
 
 
 @dataclass
 class DataRetentionPolicy:
     """Data retention policy configuration."""
+
     category: DataCategory
     retention_days: int
     anonymize_after_days: int
@@ -89,6 +96,7 @@ class DataRetentionPolicy:
 @dataclass
 class PrivacyReport:
     """User privacy report (GDPR data subject access request)."""
+
     report_id: str
     user_id: str
     generated_at: datetime = field(default_factory=datetime.utcnow)
@@ -379,7 +387,9 @@ class PrivacyCompliance:
             consent_type=consent_type,
             status=ConsentStatus.GRANTED if granted else ConsentStatus.DENIED,
             granted_at=datetime.utcnow() if granted else None,
-            expires_at=datetime.utcnow() + timedelta(days=expires_days) if granted else None,
+            expires_at=(
+                datetime.utcnow() + timedelta(days=expires_days) if granted else None
+            ),
             ip_address=self.anonymize_ip_address(ip_address) if ip_address else None,
             user_agent=user_agent[:100] if user_agent else None,
         )
@@ -548,14 +558,16 @@ class PrivacyCompliance:
             "user_id": user_id,
             "requested_at": datetime.utcnow().isoformat(),
             "status": "processing",
-            "estimated_completion": (datetime.utcnow() + timedelta(days=30)).isoformat(),
+            "estimated_completion": (
+                datetime.utcnow() + timedelta(days=30)
+            ).isoformat(),
             "categories_to_delete": [
                 DataCategory.IDENTIFIER.value,
                 DataCategory.BEHAVIORAL.value,
                 DataCategory.PREFERENCES.value,
             ],
             "message": "Your data deletion request has been received. "
-                      "Per GDPR requirements, we will process this within 30 days.",
+            "Per GDPR requirements, we will process this within 30 days.",
         }
 
     def export_user_data(
