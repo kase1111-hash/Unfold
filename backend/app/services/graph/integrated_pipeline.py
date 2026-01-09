@@ -12,6 +12,8 @@ multi-signal confidence scoring.
 """
 
 import logging
+import sys
+import time
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Tuple, Any
 from enum import Enum
@@ -20,6 +22,20 @@ from app.models.graph import RelationType
 from app.services.graph.extractor import ExtractedEntity
 
 logger = logging.getLogger(__name__)
+
+
+class PipelineError(Exception):
+    """Exception raised for pipeline errors."""
+    pass
+
+
+class PipelineStepError(Exception):
+    """Exception raised for individual pipeline step errors."""
+    def __init__(self, step: str, message: str, original_error: Optional[Exception] = None):
+        self.step = step
+        self.message = message
+        self.original_error = original_error
+        super().__init__(f"{step}: {message}")
 
 
 @dataclass
@@ -64,6 +80,7 @@ class IntegratedRelationExtractor:
         openai_key: Optional[str] = None,
         anthropic_key: Optional[str] = None,
         min_confidence: float = 0.5,
+        verbose: bool = True,
     ):
         """
         Initialize the integrated extractor.
@@ -80,17 +97,22 @@ class IntegratedRelationExtractor:
             openai_key: OpenAI API key
             anthropic_key: Anthropic API key
             min_confidence: Minimum confidence threshold
+            verbose: Whether to print progress messages
         """
         self.use_coreference = use_coreference
         self.use_dependency = use_dependency
         self.use_llm = use_llm
         self.use_patterns = use_patterns
         self.min_confidence = min_confidence
+        self.verbose = verbose
 
         # Lazy-loaded components
         self._coref_resolver = None
         self._dep_parser = None
         self._llm_extractor = None
+
+        # Track errors during extraction
+        self._step_errors: List[PipelineStepError] = []
 
         # LLM configuration
         self._llm_config = {
@@ -102,7 +124,37 @@ class IntegratedRelationExtractor:
             "anthropic_key": anthropic_key,
         }
 
-        logger.info(f"[IntegratedPipeline] Initialized with LLM provider: {llm_provider}")
+        self._log(f"Initialized with LLM provider: {llm_provider}")
+
+    def _log(self, message: str, level: str = "info"):
+        """Log a message with appropriate formatting."""
+        prefix = "[IntegratedPipeline]"
+        if level == "error":
+            logger.error(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✗ ERROR: {message}", file=sys.stderr)
+        elif level == "warning":
+            logger.warning(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ⚠ {message}")
+        elif level == "success":
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✓ {message}")
+        elif level == "progress":
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ⏳ {message}")
+        else:
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} {message}")
+
+    def _record_step_error(self, step: str, error: Exception):
+        """Record an error from a pipeline step."""
+        step_error = PipelineStepError(step, str(error), error)
+        self._step_errors.append(step_error)
+        self._log(f"Step '{step}' failed: {error}", "warning")
 
     @property
     def coref_resolver(self):
@@ -160,90 +212,163 @@ class IntegratedRelationExtractor:
 
         Returns:
             List of extracted relations, deduplicated and ranked
+
+        Raises:
+            PipelineError: If all extraction methods fail
         """
-        if not entities or len(entities) < 2:
-            return []
+        start_time = time.time()
+        self._step_errors = []  # Reset errors
 
-        # Convert entities to dict format for modules that expect it
-        entity_dicts = [
-            {"text": e.text, "type": e.entity_type.value}
-            for e in entities
-        ]
+        self._log("=" * 50)
+        self._log("Starting integrated extraction pipeline...")
+        self._log(f"Input: {len(text)} chars, {len(entities)} entities")
 
-        all_relations: List[ExtractedRelation] = []
+        try:
+            # Validate input
+            if not text or not text.strip():
+                self._log("Empty text provided, skipping", "warning")
+                return []
 
-        # Step 1: Coreference resolution
-        resolved_text = text
-        if self.coref_resolver:
+            if not entities or len(entities) < 2:
+                self._log("Need at least 2 entities for relation extraction", "warning")
+                return []
+
+            # Convert entities to dict format for modules that expect it
             try:
-                resolved = self.coref_resolver.resolve(text, entity_dicts)
-                resolved_text = resolved.resolved_text
-                logger.debug(f"Resolved {len(resolved.resolutions)} coreferences")
-            except Exception as e:
-                logger.warning(f"Coreference resolution failed: {e}")
+                entity_dicts = [
+                    {"text": e.text, "type": e.entity_type.value}
+                    for e in entities
+                ]
+            except AttributeError as e:
+                self._log(f"Invalid entity format: {e}", "error")
+                raise PipelineError(f"Invalid entity format: {e}") from e
 
-        # Step 2: Dependency parsing extraction
-        if self.dep_parser:
-            try:
-                dep_relations = self.dep_parser.extract_relations(resolved_text, entity_dicts)
-                for rel in dep_relations:
-                    all_relations.append(ExtractedRelation(
-                        source_text=rel.subject,
-                        target_text=rel.object,
-                        relation_type=self._map_relation_type(rel.relation_type),
-                        confidence=rel.confidence,
-                        context=rel.evidence,
-                        extraction_method=ExtractionMethod.DEPENDENCY.value,
-                    ))
-                logger.debug(f"Dependency parsing: {len(dep_relations)} relations")
-            except Exception as e:
-                logger.warning(f"Dependency extraction failed: {e}")
+            all_relations: List[ExtractedRelation] = []
+            steps_completed = 0
+            steps_failed = 0
 
-        # Step 3: LLM extraction
-        if self.llm_extractor and self.llm_extractor.is_available():
-            try:
-                from app.services.graph.llm_relations import EntityPair
+            # Step 1: Coreference resolution
+            self._log("Step 1/4: Coreference resolution...", "progress")
+            resolved_text = text
+            if self.coref_resolver:
+                try:
+                    resolved = self.coref_resolver.resolve(text, entity_dicts)
+                    resolved_text = resolved.resolved_text
+                    self._log(f"Step 1/4: Resolved {len(resolved.resolutions)} coreferences", "success")
+                    steps_completed += 1
+                except Exception as e:
+                    self._record_step_error("coreference", e)
+                    steps_failed += 1
+            else:
+                self._log("Step 1/4: Skipped (not configured)")
+                steps_completed += 1
 
-                # Build entity pairs for LLM
-                entity_pairs = self._build_entity_pairs(resolved_text, entity_dicts)
-
-                if entity_pairs:
-                    llm_relations = self.llm_extractor.extract_relations(entity_pairs)
-                    for rel in llm_relations:
+            # Step 2: Dependency parsing extraction
+            self._log("Step 2/4: Dependency parsing...", "progress")
+            if self.dep_parser:
+                try:
+                    dep_relations = self.dep_parser.extract_relations(resolved_text, entity_dicts)
+                    for rel in dep_relations:
                         all_relations.append(ExtractedRelation(
-                            source_text=rel.source,
-                            target_text=rel.target,
-                            relation_type=self._map_llm_relation_type(rel.relation_type.value),
+                            source_text=rel.subject,
+                            target_text=rel.object,
+                            relation_type=self._map_relation_type(rel.relation_type),
                             confidence=rel.confidence,
-                            context=rel.reasoning,
-                            extraction_method=ExtractionMethod.LLM.value,
+                            context=rel.evidence,
+                            extraction_method=ExtractionMethod.DEPENDENCY.value,
                         ))
-                    logger.debug(f"LLM extraction: {len(llm_relations)} relations")
-            except Exception as e:
-                logger.warning(f"LLM extraction failed: {e}")
+                    self._log(f"Step 2/4: Extracted {len(dep_relations)} dependency relations", "success")
+                    steps_completed += 1
+                except Exception as e:
+                    self._record_step_error("dependency", e)
+                    steps_failed += 1
+            else:
+                self._log("Step 2/4: Skipped (not configured)")
+                steps_completed += 1
 
-        # Step 4: Pattern-based extraction
-        if self.use_patterns:
+            # Step 3: LLM extraction
+            self._log("Step 3/4: LLM extraction...", "progress")
+            if self.llm_extractor and self.llm_extractor.is_available():
+                try:
+                    from app.services.graph.llm_relations import EntityPair
+
+                    # Build entity pairs for LLM
+                    entity_pairs = self._build_entity_pairs(resolved_text, entity_dicts)
+
+                    if entity_pairs:
+                        llm_relations = self.llm_extractor.extract_relations(entity_pairs)
+                        for rel in llm_relations:
+                            all_relations.append(ExtractedRelation(
+                                source_text=rel.source,
+                                target_text=rel.target,
+                                relation_type=self._map_llm_relation_type(rel.relation_type.value),
+                                confidence=rel.confidence,
+                                context=rel.reasoning,
+                                extraction_method=ExtractionMethod.LLM.value,
+                            ))
+                        self._log(f"Step 3/4: Extracted {len(llm_relations)} LLM relations", "success")
+                    else:
+                        self._log("Step 3/4: No entity pairs to process", "warning")
+                    steps_completed += 1
+                except Exception as e:
+                    self._record_step_error("llm", e)
+                    steps_failed += 1
+            else:
+                self._log("Step 3/4: Skipped (LLM not available)")
+                steps_completed += 1
+
+            # Step 4: Pattern-based extraction
+            self._log("Step 4/4: Pattern extraction...", "progress")
+            if self.use_patterns:
+                try:
+                    pattern_relations = self._extract_patterns(resolved_text, entity_dicts)
+                    all_relations.extend(pattern_relations)
+                    self._log(f"Step 4/4: Extracted {len(pattern_relations)} pattern relations", "success")
+                    steps_completed += 1
+                except Exception as e:
+                    self._record_step_error("pattern", e)
+                    steps_failed += 1
+            else:
+                self._log("Step 4/4: Skipped (not configured)")
+                steps_completed += 1
+
+            # Bonus: Co-occurrence fallback for uncovered pairs
+            if len(all_relations) < max_relations // 2:
+                try:
+                    cooc_relations = self._extract_cooccurrence(resolved_text, entity_dicts, all_relations)
+                    all_relations.extend(cooc_relations)
+                    if cooc_relations:
+                        self._log(f"Added {len(cooc_relations)} co-occurrence relations")
+                except Exception as e:
+                    self._log(f"Co-occurrence extraction failed: {e}", "warning")
+
+            # Deduplicate and filter
             try:
-                pattern_relations = self._extract_patterns(resolved_text, entity_dicts)
-                all_relations.extend(pattern_relations)
-                logger.debug(f"Pattern extraction: {len(pattern_relations)} relations")
+                relations = self._deduplicate_relations(all_relations)
+                relations = [r for r in relations if r.confidence >= self.min_confidence]
+                relations.sort(key=lambda r: r.confidence, reverse=True)
             except Exception as e:
-                logger.warning(f"Pattern extraction failed: {e}")
+                self._log(f"Deduplication failed: {e}", "error")
+                relations = all_relations[:max_relations]
 
-        # Step 5: Co-occurrence fallback for uncovered pairs
-        if len(all_relations) < max_relations // 2:
-            cooc_relations = self._extract_cooccurrence(resolved_text, entity_dicts, all_relations)
-            all_relations.extend(cooc_relations)
-            logger.debug(f"Co-occurrence: {len(cooc_relations)} relations")
+            # Final summary
+            elapsed = time.time() - start_time
+            self._log("=" * 50)
+            if steps_failed == 0:
+                self._log(f"Pipeline completed successfully in {elapsed:.2f}s", "success")
+            else:
+                self._log(f"Pipeline completed with {steps_failed} errors in {elapsed:.2f}s", "warning")
+            self._log(f"Result: {len(relations)} relations extracted")
+            self._log("=" * 50)
 
-        # Deduplicate and filter
-        relations = self._deduplicate_relations(all_relations)
-        relations = [r for r in relations if r.confidence >= self.min_confidence]
-        relations.sort(key=lambda r: r.confidence, reverse=True)
+            return relations[:max_relations]
 
-        logger.info(f"[IntegratedPipeline] Extracted {len(relations)} relations")
-        return relations[:max_relations]
+        except PipelineError:
+            raise
+        except Exception as e:
+            elapsed = time.time() - start_time
+            self._log(f"Pipeline failed after {elapsed:.2f}s: {e}", "error")
+            raise PipelineError(f"Pipeline failed: {e}") from e
 
     def _build_entity_pairs(
         self,
@@ -411,10 +536,17 @@ class IntegratedRelationExtractor:
         seen = {}
 
         for rel in relations:
+            # Handle relation_type as either enum or string
+            rel_type_value = (
+                rel.relation_type.value
+                if hasattr(rel.relation_type, 'value')
+                else str(rel.relation_type)
+            )
+
             key = (
                 rel.source_text.lower(),
                 rel.target_text.lower(),
-                rel.relation_type.value,
+                rel_type_value,
             )
 
             if key not in seen or rel.confidence > seen[key].confidence:

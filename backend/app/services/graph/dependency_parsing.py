@@ -12,10 +12,19 @@ Dependency patterns commonly used:
 - appos (apposition): "BERT, a language model" -> (BERT, is_a, language model)
 """
 
+import logging
+import sys
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple, Set
 from enum import Enum
 import re
+
+logger = logging.getLogger(__name__)
+
+
+class DependencyParsingError(Exception):
+    """Exception raised for dependency parsing errors."""
+    pass
 
 
 class DependencyRelation(Enum):
@@ -169,23 +178,48 @@ class DependencyParser:
     Uses spaCy when available, falls back to pattern-based parsing.
     """
 
-    def __init__(self, use_spacy: bool = True):
+    def __init__(self, use_spacy: bool = True, verbose: bool = True):
         self.nlp = None
         self.use_spacy = use_spacy
         self.simulated_mode = False
+        self.verbose = verbose
 
         if use_spacy:
             try:
                 import spacy
                 self.nlp = spacy.load("en_core_web_sm")
-                print("  [DependencyParser] Using spaCy for parsing")
-            except (ImportError, OSError) as e:
-                print(f"  [DependencyParser] spaCy unavailable: {e}")
-                print("  [DependencyParser] Falling back to pattern-based parsing")
+                self._log("Using spaCy for parsing", "success")
+            except ImportError as e:
+                self._log(f"spaCy not installed: {e}", "warning")
+                self._log("Falling back to pattern-based parsing")
+                self.simulated_mode = True
+            except OSError as e:
+                self._log(f"spaCy model not found: {e}", "warning")
+                self._log("Falling back to pattern-based parsing")
                 self.simulated_mode = True
         else:
             self.simulated_mode = True
-            print("  [DependencyParser] Using pattern-based parsing (simulated mode)")
+            self._log("Using pattern-based parsing (simulated mode)")
+
+    def _log(self, message: str, level: str = "info"):
+        """Log a message with appropriate formatting."""
+        prefix = "[DependencyParser]"
+        if level == "error":
+            logger.error(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✗ ERROR: {message}", file=sys.stderr)
+        elif level == "warning":
+            logger.warning(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ⚠ {message}")
+        elif level == "success":
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} ✓ {message}")
+        else:
+            logger.info(f"{prefix} {message}")
+            if self.verbose:
+                print(f"  {prefix} {message}")
 
     def parse(self, text: str) -> List[ParsedSentence]:
         """Parse text into sentences with dependency information."""
@@ -399,20 +433,66 @@ class DependencyParser:
 
         Returns:
             List of extracted relations
+
+        Raises:
+            DependencyParsingError: If parsing fails critically
         """
-        entity_texts = {e['text'].lower(): e for e in entities}
-        entity_set = set(entity_texts.keys())
+        self._log("Starting dependency-based relation extraction...")
 
-        parsed = self.parse(text)
-        relations = []
+        try:
+            # Validate inputs
+            if not text or not text.strip():
+                self._log("Empty text provided, skipping extraction", "warning")
+                return []
 
-        for sentence in parsed:
-            sentence_relations = self._extract_from_sentence(
-                sentence, entity_texts, entity_set
-            )
-            relations.extend(sentence_relations)
+            if not entities:
+                self._log("No entities provided, skipping extraction", "warning")
+                return []
 
-        return relations
+            # Build entity lookup
+            try:
+                entity_texts = {e['text'].lower(): e for e in entities}
+                entity_set = set(entity_texts.keys())
+                self._log(f"Processing {len(entities)} entities")
+            except (KeyError, TypeError) as e:
+                self._log(f"Invalid entity format: {e}", "error")
+                raise DependencyParsingError(f"Invalid entity format: {e}") from e
+
+            # Parse text
+            try:
+                parsed = self.parse(text)
+                self._log(f"Parsed {len(parsed)} sentences")
+            except Exception as e:
+                self._log(f"Failed to parse text: {e}", "error")
+                raise DependencyParsingError(f"Parsing failed: {e}") from e
+
+            # Extract relations from each sentence
+            relations = []
+            errors = 0
+
+            for i, sentence in enumerate(parsed):
+                try:
+                    sentence_relations = self._extract_from_sentence(
+                        sentence, entity_texts, entity_set
+                    )
+                    relations.extend(sentence_relations)
+                except Exception as e:
+                    self._log(f"Error in sentence {i+1}: {e}", "warning")
+                    errors += 1
+
+            # Report completion
+            if errors > 0:
+                self._log(f"Completed with {errors} errors: {len(relations)} relations extracted", "warning")
+            else:
+                self._log(f"Completed successfully: {len(relations)} relations extracted", "success")
+
+            return relations
+
+        except DependencyParsingError:
+            raise
+        except Exception as e:
+            self._log(f"Unexpected error: {e}", "error")
+            raise DependencyParsingError(f"Extraction failed: {e}") from e
 
     def _extract_from_sentence(
         self,
