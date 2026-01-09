@@ -1,22 +1,31 @@
-# Unfold Portable - Minimal Dependencies
-# These are the essential packages needed for the portable build
+# Unfold Portable - Complete Dependencies
+# These packages are bundled into the portable executable
 
 # Web Framework
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
+python-multipart==0.0.9
+starlette>=0.36.0
 
 # Data Validation
 pydantic==2.6.1
 pydantic-settings==2.1.0
+email-validator==2.1.0.post1
 
 # HTTP Client (for Ollama API calls)
 httpx==0.26.0
+aiohttp==3.9.3
+
+# JSON (fast serialization)
+orjson>=3.9.0
+
+# Async support
+anyio>=4.0.0
 
 # Build Tools
 pyinstaller==6.3.0
 
-# NLP (optional - for advanced extraction)
-# spacy==3.7.4
-
-# Note: The portable build uses SQLite instead of PostgreSQL/Neo4j
-# This reduces dependencies and allows true portable operation
+# Note: The portable build uses:
+# - SQLite instead of PostgreSQL/Neo4j for local storage
+# - Direct Ollama API calls for LLM extraction (no backend deps needed)
+# - Minimal dependencies for true portable operation

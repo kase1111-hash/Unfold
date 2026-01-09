@@ -50,14 +50,11 @@ if errorlevel 1 (
 )
 
 echo [3/6] Installing required dependencies...
-pip install -r backend\requirements.txt --quiet 2>NUL
+pip install -r requirements_portable.txt --quiet 2>NUL
 if errorlevel 1 (
     echo WARNING: Some dependencies may not have installed correctly
     echo Continuing with build...
 )
-
-REM Install additional portable dependencies
-pip install httpx uvicorn[standard] --quiet 2>NUL
 
 echo [4/6] Creating version info...
 echo VSVersionInfo( > version_info.txt

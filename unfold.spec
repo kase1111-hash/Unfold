@@ -33,12 +33,10 @@ for root, dirs, files in os.walk(BACKEND_DIR):
 # Analysis configuration
 a = Analysis(
     ['unfold_portable.py'],
-    pathex=[str(BACKEND_DIR)],
+    pathex=[],
     binaries=[],
     datas=[
-        # Include backend source files
-        (str(BACKEND_DIR / 'app'), 'backend/app'),
-        # Include any static files if they exist
+        # No additional data files needed - portable mode uses Ollama directly
     ],
     hiddenimports=[
         # FastAPI and web server
@@ -58,45 +56,30 @@ a = Analysis(
         'starlette.routing',
         'starlette.middleware',
         'starlette.middleware.cors',
+        'starlette.responses',
+        'starlette.requests',
 
         # Pydantic
         'pydantic',
         'pydantic_settings',
         'pydantic.deprecated.decorator',
+        'pydantic_core',
 
-        # Database
+        # Database (SQLite only for portable)
         'sqlite3',
-        'asyncpg',
-        'sqlalchemy',
-        'sqlalchemy.ext.asyncio',
 
         # HTTP clients
         'httpx',
         'httpx._transports',
         'httpx._transports.default',
-        'aiohttp',
-
-        # NLP and ML (if available)
-        'spacy',
-        'spacy.lang.en',
+        'httpcore',
+        'anyio',
+        'anyio._backends',
+        'anyio._backends._asyncio',
 
         # JSON and serialization
         'json',
         'orjson',
-
-        # Graph services
-        'app.services.graph.coreference',
-        'app.services.graph.dependency_parsing',
-        'app.services.graph.llm_relations',
-        'app.services.graph.integrated_pipeline',
-        'app.services.graph.extractor',
-        'app.services.graph.builder',
-        'app.services.graph.relations',
-        'app.services.graph.spacy_loader',
-
-        # Models
-        'app.models.graph',
-        'app.models.document',
 
         # Utilities
         're',
@@ -109,15 +92,16 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude heavy optional dependencies
+        # Exclude heavy ML/AI dependencies (not needed for Ollama-based extraction)
         'torch',
         'tensorflow',
         'transformers',
         'matplotlib',
         'pandas',
-        'numpy',  # Re-add if needed for spacy
+        'numpy',
         'scipy',
         'sklearn',
+        'spacy',
 
         # Exclude test frameworks
         'pytest',
@@ -129,15 +113,32 @@ a = Analysis(
         'ruff',
         'mypy',
 
-        # Exclude unused database drivers
+        # Exclude database drivers not used in portable mode
         'neo4j',
         'pinecone',
+        'asyncpg',
+        'sqlalchemy',
+        'alembic',
+        'redis',
 
         # Exclude cloud providers
         'boto3',
         'botocore',
         'google',
         'azure',
+
+        # Exclude document processing (not needed for basic extraction)
+        'pypdf2',
+        'python-docx',
+        'ebooklib',
+        'pytesseract',
+
+        # Exclude other unnecessary packages
+        'langchain',
+        'langchain_openai',
+        'langchain_community',
+        'openai',
+        'anthropic',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
