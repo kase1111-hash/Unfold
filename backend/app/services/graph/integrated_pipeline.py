@@ -411,10 +411,17 @@ class IntegratedRelationExtractor:
         seen = {}
 
         for rel in relations:
+            # Handle relation_type as either enum or string
+            rel_type_value = (
+                rel.relation_type.value
+                if hasattr(rel.relation_type, 'value')
+                else str(rel.relation_type)
+            )
+
             key = (
                 rel.source_text.lower(),
                 rel.target_text.lower(),
-                rel.relation_type.value,
+                rel_type_value,
             )
 
             if key not in seen or rel.confidence > seen[key].confidence:
