@@ -219,30 +219,22 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
     };
   }, [nodes, links, selectedNodeId, selectNode, setHoveredNode, setZoom, loadRelatedNodes]);
 
-  // Zoom controls
+  // Zoom controls - use Function type to handle D3 zoom API
   const handleZoomIn = useCallback(() => {
     if (svgRef.current) {
       const svg = d3.select(svgRef.current);
-      svg.transition().call(
-        d3.zoom<SVGSVGElement, unknown>().scaleBy as unknown as (
-          selection: d3.Selection<SVGSVGElement, unknown, null, undefined>,
-          k: number
-        ) => void,
-        1.5
-      );
+      const zoom = d3.zoom<SVGSVGElement, unknown>();
+      const transition = svg.transition();
+      (zoom.scaleBy as Function)(transition, 1.5);
     }
   }, []);
 
   const handleZoomOut = useCallback(() => {
     if (svgRef.current) {
       const svg = d3.select(svgRef.current);
-      svg.transition().call(
-        d3.zoom<SVGSVGElement, unknown>().scaleBy as unknown as (
-          selection: d3.Selection<SVGSVGElement, unknown, null, undefined>,
-          k: number
-        ) => void,
-        0.67
-      );
+      const zoom = d3.zoom<SVGSVGElement, unknown>();
+      const transition = svg.transition();
+      (zoom.scaleBy as Function)(transition, 0.67);
     }
   }, []);
 
@@ -251,14 +243,10 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
       const svg = d3.select(svgRef.current);
       const width = containerRef.current.clientWidth;
       const height = containerRef.current.clientHeight || 500;
-
-      svg.transition().call(
-        d3.zoom<SVGSVGElement, unknown>().transform as unknown as (
-          selection: d3.Selection<SVGSVGElement, unknown, null, undefined>,
-          transform: d3.ZoomTransform
-        ) => void,
-        d3.zoomIdentity.translate(width / 2, height / 2).scale(1)
-      );
+      const zoom = d3.zoom<SVGSVGElement, unknown>();
+      const transition = svg.transition();
+      const transform = d3.zoomIdentity.translate(width / 2, height / 2).scale(1);
+      (zoom.transform as Function)(transition, transform);
     }
   }, []);
 

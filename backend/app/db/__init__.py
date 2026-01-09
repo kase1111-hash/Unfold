@@ -47,6 +47,17 @@ from app.db.vector import (
     pinecone_upsert,
     save_faiss_index,
 )
+from app.db.query_utils import (
+    PaginationParams,
+    PaginatedResult,
+    QueryBuilder,
+    paginate_query,
+    bulk_insert,
+    bulk_update,
+    exists,
+    get_or_create,
+    build_search_filter,
+)
 
 __all__ = [
     # PostgreSQL
@@ -89,6 +100,16 @@ __all__ = [
     "check_pinecone_connection",
     # Unified Vector Store
     "VectorStore",
+    # Query Utilities
+    "PaginationParams",
+    "PaginatedResult",
+    "QueryBuilder",
+    "paginate_query",
+    "bulk_insert",
+    "bulk_update",
+    "exists",
+    "get_or_create",
+    "build_search_filter",
 ]
 
 
@@ -113,6 +134,13 @@ async def init_all_databases() -> None:
     except ImportError:
         pass  # FAISS is optional
 
+    # Initialize Redis cache (optional)
+    try:
+        from app.services.cache import init_redis
+        await init_redis()
+    except Exception:
+        pass  # Redis is optional
+
 
 async def close_all_databases() -> None:
     """Close all database connections.
@@ -124,6 +152,13 @@ async def close_all_databases() -> None:
     await close_faiss()
     await close_pinecone()
 
+    # Close Redis cache
+    try:
+        from app.services.cache import close_redis
+        await close_redis()
+    except Exception:
+        pass
+
 
 async def check_all_connections() -> dict[str, dict]:
     """Check all database connections for health.
@@ -131,8 +166,17 @@ async def check_all_connections() -> dict[str, dict]:
     Returns:
         Dict with status for each database
     """
-    return {
+    result = {
         "postgresql": await check_postgres_connection(),
         "neo4j": await check_neo4j_connection(),
         "vector_store": await check_faiss_connection(),
     }
+
+    # Check Redis
+    try:
+        from app.services.cache import check_redis_health
+        result["redis"] = await check_redis_health()
+    except Exception:
+        result["redis"] = {"status": "unavailable"}
+
+    return result

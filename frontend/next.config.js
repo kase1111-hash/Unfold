@@ -2,6 +2,9 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // Enable standalone output for Docker production builds
+  output: 'standalone',
+
   // API proxy to backend
   async rewrites() {
     return [
