@@ -1,0 +1,39 @@
+{
+  "app_name": "Unfold Portable",
+  "version": "1.0.0",
+
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "open_browser": true,
+    "debug": false
+  },
+
+  "llm": {
+    "provider": "ollama",
+    "model": "llama3.2",
+    "ollama_host": "http://localhost:11434",
+    "fallback_to_patterns": true
+  },
+
+  "extraction": {
+    "use_coreference": true,
+    "use_dependency": true,
+    "use_llm": true,
+    "use_patterns": true,
+    "confidence_threshold": 0.5,
+    "deduplicate": true
+  },
+
+  "storage": {
+    "use_sqlite": true,
+    "export_formats": ["json", "graphml", "cypher"],
+    "auto_save": true
+  },
+
+  "ui": {
+    "theme": "dark",
+    "show_confidence": true,
+    "show_extraction_method": true
+  }
+}
