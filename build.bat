@@ -90,7 +90,7 @@ echo ) >> version_info.txt
 
 echo [5/6] Building executable with PyInstaller...
 echo.
-pyinstaller unfold.spec --noconfirm
+python -m PyInstaller unfold.spec --noconfirm
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed
     goto :error
