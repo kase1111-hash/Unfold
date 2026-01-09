@@ -3,7 +3,6 @@ Integration tests for the document ingestion and management flow.
 Tests the complete lifecycle: upload -> validate -> process -> retrieve -> delete
 """
 
-import pytest
 from fastapi.testclient import TestClient
 from io import BytesIO
 
@@ -45,7 +44,9 @@ class TestDocumentIngestionFlow:
         """Test uploading an invalid file type is rejected."""
         # Create a fake executable file
         file_content = b"#!/bin/bash\necho 'hello'"
-        files = {"file": ("test.exe", BytesIO(file_content), "application/octet-stream")}
+        files = {
+            "file": ("test.exe", BytesIO(file_content), "application/octet-stream")
+        }
 
         response = client.post(
             f"{api_prefix}/documents/upload",
@@ -93,7 +94,11 @@ class TestDocumentProcessing:
             assert "doc_id" in data or "id" in data or "document_id" in data
 
     def test_document_paraphrase_endpoint(
-        self, client: TestClient, api_prefix: str, mock_document_id: str, auth_headers: dict
+        self,
+        client: TestClient,
+        api_prefix: str,
+        mock_document_id: str,
+        auth_headers: dict,
     ):
         """Test paraphrase endpoint structure."""
         response = client.get(

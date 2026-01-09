@@ -6,11 +6,10 @@ Provides helpers for efficient database operations.
 import logging
 from typing import TypeVar, Generic, Sequence, Optional, Any
 from dataclasses import dataclass
-from datetime import datetime
 
-from sqlalchemy import select, func, and_, or_, text
+from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +19,7 @@ T = TypeVar("T")
 @dataclass
 class PaginationParams:
     """Pagination parameters."""
+
     page: int = 1
     page_size: int = 20
     max_page_size: int = 100
@@ -40,6 +40,7 @@ class PaginationParams:
 @dataclass
 class PaginatedResult(Generic[T]):
     """Paginated query result."""
+
     items: Sequence[T]
     total: int
     page: int
@@ -139,7 +140,7 @@ async def bulk_insert(
     total_inserted = 0
 
     for i in range(0, len(items), batch_size):
-        batch = items[i:i + batch_size]
+        batch = items[i : i + batch_size]
         objects = [model_class(**item) for item in batch]
         session.add_all(objects)
         await session.flush()
@@ -175,9 +176,7 @@ async def bulk_update(
         if id_value is None:
             continue
 
-        query = select(model_class).where(
-            getattr(model_class, id_field) == id_value
-        )
+        query = select(model_class).where(getattr(model_class, id_field) == id_value)
         result = await session.execute(query)
         obj = result.scalar_one_or_none()
 
@@ -320,16 +319,12 @@ class QueryBuilder:
         """Add equality filter conditions."""
         for field, value in kwargs.items():
             if hasattr(self.model_class, field):
-                self._filters.append(
-                    getattr(self.model_class, field) == value
-                )
+                self._filters.append(getattr(self.model_class, field) == value)
         return self
 
     def search(self, term: str, fields: list[str]):
         """Add search filter."""
-        search_filter = build_search_filter(
-            self.model_class, term, fields
-        )
+        search_filter = build_search_filter(self.model_class, term, fields)
         if search_filter is not None:
             self._filters.append(search_filter)
         return self
@@ -401,7 +396,8 @@ class QueryBuilder:
         """Get count of matching records."""
         count_query = select(func.count()).select_from(
             self._query.where(and_(*self._filters)).subquery()
-            if self._filters else self.model_class
+            if self._filters
+            else self.model_class
         )
         result = await session.execute(count_query)
         return result.scalar() or 0

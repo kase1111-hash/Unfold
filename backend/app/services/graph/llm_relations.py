@@ -33,8 +33,8 @@ import sys
 import json
 import hashlib
 import logging
-from typing import List, Dict, Optional, Tuple, Any
-from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Any
+from dataclasses import dataclass
 from enum import Enum
 from abc import ABC, abstractmethod
 
@@ -43,11 +43,13 @@ logger = logging.getLogger(__name__)
 
 class LLMExtractionError(Exception):
     """Exception raised for LLM extraction errors."""
+
     pass
 
 
 class RelationType(str, Enum):
     """Relation types for LLM extraction."""
+
     CREATES = "CREATES"
     DEVELOPS = "DEVELOPS"
     INTRODUCES = "INTRODUCES"
@@ -71,6 +73,7 @@ class RelationType(str, Enum):
 @dataclass
 class EntityPair:
     """A pair of entities to analyze."""
+
     source_text: str
     source_type: str
     target_text: str
@@ -81,6 +84,7 @@ class EntityPair:
 @dataclass
 class LLMRelation:
     """A relation extracted by the LLM."""
+
     source: str
     target: str
     relation_type: RelationType
@@ -92,14 +96,12 @@ class LLMRelation:
 # LLM PROVIDER INTERFACE
 # ============================================================================
 
+
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
     @abstractmethod
-    def extract_relations(
-        self,
-        entity_pairs: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def extract_relations(self, entity_pairs: List[EntityPair]) -> List[LLMRelation]:
         """Extract relations from entity pairs."""
         pass
 
@@ -113,6 +115,7 @@ class LLMProvider(ABC):
 # OPENAI PROVIDER
 # ============================================================================
 
+
 class OpenAIProvider(LLMProvider):
     """OpenAI-based relation extraction."""
 
@@ -120,7 +123,7 @@ class OpenAIProvider(LLMProvider):
         self,
         api_key: Optional[str] = None,
         model: str = "gpt-4o-mini",
-        temperature: float = 0.1
+        temperature: float = 0.1,
     ):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.model = model
@@ -131,7 +134,8 @@ class OpenAIProvider(LLMProvider):
         if not self.api_key:
             return False
         try:
-            import openai
+            import openai  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -139,13 +143,11 @@ class OpenAIProvider(LLMProvider):
     def _get_client(self):
         if self._client is None:
             import openai
+
             self._client = openai.OpenAI(api_key=self.api_key)
         return self._client
 
-    def extract_relations(
-        self,
-        entity_pairs: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def extract_relations(self, entity_pairs: List[EntityPair]) -> List[LLMRelation]:
         if not self.is_available():
             return []
 
@@ -155,26 +157,24 @@ class OpenAIProvider(LLMProvider):
         # Process in batches of 10
         batch_size = 10
         for i in range(0, len(entity_pairs), batch_size):
-            batch = entity_pairs[i:i + batch_size]
+            batch = entity_pairs[i : i + batch_size]
             batch_relations = self._process_batch(client, batch)
             relations.extend(batch_relations)
 
         return relations
 
-    def _process_batch(
-        self,
-        client,
-        batch: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def _process_batch(self, client, batch: List[EntityPair]) -> List[LLMRelation]:
         """Process a batch of entity pairs."""
 
         # Build the prompt
-        pairs_text = "\n".join([
-            f"{idx+1}. Source: \"{p.source_text}\" ({p.source_type}) | "
-            f"Target: \"{p.target_text}\" ({p.target_type})\n"
-            f"   Context: \"{p.context[:200]}...\""
-            for idx, p in enumerate(batch)
-        ])
+        pairs_text = "\n".join(
+            [
+                f'{idx+1}. Source: "{p.source_text}" ({p.source_type}) | '
+                f'Target: "{p.target_text}" ({p.target_type})\n'
+                f'   Context: "{p.context[:200]}..."'
+                for idx, p in enumerate(batch)
+            ]
+        )
 
         prompt = f"""Analyze the semantic relationships between entity pairs based on their context.
 
@@ -211,11 +211,14 @@ Focus on the specific semantic relationship implied by the context. Be precise.
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": "You are a precise semantic relation extraction system. Output valid JSON only."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a precise semantic relation extraction system. Output valid JSON only.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=self.temperature,
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
             )
 
             content = response.choices[0].message.content
@@ -226,9 +229,7 @@ Focus on the specific semantic relationship implied by the context. Be precise.
             return []
 
     def _parse_response(
-        self,
-        content: str,
-        batch: List[EntityPair]
+        self, content: str, batch: List[EntityPair]
     ) -> List[LLMRelation]:
         """Parse LLM response into relations."""
         relations = []
@@ -254,13 +255,15 @@ Focus on the specific semantic relationship implied by the context. Be precise.
                         rel_type = RelationType.RELATED_TO
 
                     if rel_type != RelationType.NONE:
-                        relations.append(LLMRelation(
-                            source=pair.source_text,
-                            target=pair.target_text,
-                            relation_type=rel_type,
-                            confidence=float(item.get("confidence", 0.7)),
-                            reasoning=item.get("reasoning", "")
-                        ))
+                        relations.append(
+                            LLMRelation(
+                                source=pair.source_text,
+                                target=pair.target_text,
+                                relation_type=rel_type,
+                                confidence=float(item.get("confidence", 0.7)),
+                                reasoning=item.get("reasoning", ""),
+                            )
+                        )
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse LLM response: {e}")
@@ -272,6 +275,7 @@ Focus on the specific semantic relationship implied by the context. Be precise.
 # ANTHROPIC PROVIDER
 # ============================================================================
 
+
 class AnthropicProvider(LLMProvider):
     """Anthropic Claude-based relation extraction."""
 
@@ -279,7 +283,7 @@ class AnthropicProvider(LLMProvider):
         self,
         api_key: Optional[str] = None,
         model: str = "claude-3-haiku-20240307",
-        temperature: float = 0.1
+        temperature: float = 0.1,
     ):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self.model = model
@@ -290,7 +294,8 @@ class AnthropicProvider(LLMProvider):
         if not self.api_key:
             return False
         try:
-            import anthropic
+            import anthropic  # noqa: F401
+
             return True
         except ImportError:
             return False
@@ -298,13 +303,11 @@ class AnthropicProvider(LLMProvider):
     def _get_client(self):
         if self._client is None:
             import anthropic
+
             self._client = anthropic.Anthropic(api_key=self.api_key)
         return self._client
 
-    def extract_relations(
-        self,
-        entity_pairs: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def extract_relations(self, entity_pairs: List[EntityPair]) -> List[LLMRelation]:
         if not self.is_available():
             return []
 
@@ -314,24 +317,22 @@ class AnthropicProvider(LLMProvider):
         # Process in batches
         batch_size = 10
         for i in range(0, len(entity_pairs), batch_size):
-            batch = entity_pairs[i:i + batch_size]
+            batch = entity_pairs[i : i + batch_size]
             batch_relations = self._process_batch(client, batch)
             relations.extend(batch_relations)
 
         return relations
 
-    def _process_batch(
-        self,
-        client,
-        batch: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def _process_batch(self, client, batch: List[EntityPair]) -> List[LLMRelation]:
         """Process a batch of entity pairs."""
 
-        pairs_text = "\n".join([
-            f"{idx+1}. \"{p.source_text}\" ({p.source_type}) → \"{p.target_text}\" ({p.target_type})\n"
-            f"   Context: {p.context[:150]}"
-            for idx, p in enumerate(batch)
-        ])
+        pairs_text = "\n".join(
+            [
+                f'{idx+1}. "{p.source_text}" ({p.source_type}) → "{p.target_text}" ({p.target_type})\n'
+                f"   Context: {p.context[:150]}"
+                for idx, p in enumerate(batch)
+            ]
+        )
 
         prompt = f"""Extract semantic relationships between these entity pairs.
 
@@ -349,7 +350,7 @@ Be precise. Use NONE if no clear relationship exists."""
             response = client.messages.create(
                 model=self.model,
                 max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}]
+                messages=[{"role": "user", "content": prompt}],
             )
 
             content = response.content[0].text
@@ -368,9 +369,7 @@ Be precise. Use NONE if no clear relationship exists."""
             return []
 
     def _parse_response(
-        self,
-        content: str,
-        batch: List[EntityPair]
+        self, content: str, batch: List[EntityPair]
     ) -> List[LLMRelation]:
         """Parse response into relations."""
         relations = []
@@ -392,13 +391,15 @@ Be precise. Use NONE if no clear relationship exists."""
                         rel_type = RelationType.RELATED_TO
 
                     if rel_type != RelationType.NONE:
-                        relations.append(LLMRelation(
-                            source=pair.source_text,
-                            target=pair.target_text,
-                            relation_type=rel_type,
-                            confidence=float(item.get("confidence", 0.7)),
-                            reasoning=item.get("reasoning", "")
-                        ))
+                        relations.append(
+                            LLMRelation(
+                                source=pair.source_text,
+                                target=pair.target_text,
+                                relation_type=rel_type,
+                                confidence=float(item.get("confidence", 0.7)),
+                                reasoning=item.get("reasoning", ""),
+                            )
+                        )
 
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse response: {e}")
@@ -409,6 +410,7 @@ Be precise. Use NONE if no clear relationship exists."""
 # ============================================================================
 # OLLAMA PROVIDER (Local LLM - Default)
 # ============================================================================
+
 
 class OllamaProvider(LLMProvider):
     """
@@ -428,7 +430,7 @@ class OllamaProvider(LLMProvider):
         model: str = "llama3.2",
         base_url: str = "http://localhost:11434",
         temperature: float = 0.1,
-        timeout: int = 60
+        timeout: int = 60,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
@@ -443,16 +445,16 @@ class OllamaProvider(LLMProvider):
 
         try:
             import requests
-            response = requests.get(
-                f"{self.base_url}/api/tags",
-                timeout=5
-            )
+
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get("models", [])
                 model_names = [m.get("name", "").split(":")[0] for m in models]
                 self._available = self.model.split(":")[0] in model_names
                 if not self._available:
-                    logger.info(f"Ollama model '{self.model}' not found. Available: {model_names}")
+                    logger.info(
+                        f"Ollama model '{self.model}' not found. Available: {model_names}"
+                    )
             else:
                 self._available = False
         except Exception as e:
@@ -461,10 +463,7 @@ class OllamaProvider(LLMProvider):
 
         return self._available
 
-    def extract_relations(
-        self,
-        entity_pairs: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def extract_relations(self, entity_pairs: List[EntityPair]) -> List[LLMRelation]:
         if not self.is_available():
             return []
 
@@ -473,7 +472,7 @@ class OllamaProvider(LLMProvider):
         # Process in smaller batches for local models
         batch_size = 5
         for i in range(0, len(entity_pairs), batch_size):
-            batch = entity_pairs[i:i + batch_size]
+            batch = entity_pairs[i : i + batch_size]
             batch_relations = self._process_batch(batch)
             relations.extend(batch_relations)
 
@@ -483,11 +482,13 @@ class OllamaProvider(LLMProvider):
         """Process a batch of entity pairs with Ollama."""
         import requests
 
-        pairs_text = "\n".join([
-            f"{idx+1}. \"{p.source_text}\" ({p.source_type}) → \"{p.target_text}\" ({p.target_type})\n"
-            f"   Context: {p.context[:150]}"
-            for idx, p in enumerate(batch)
-        ])
+        pairs_text = "\n".join(
+            [
+                f'{idx+1}. "{p.source_text}" ({p.source_type}) → "{p.target_text}" ({p.target_type})\n'
+                f"   Context: {p.context[:150]}"
+                for idx, p in enumerate(batch)
+            ]
+        )
 
         prompt = f"""You are a relation extraction system. Analyze entity pairs and determine their semantic relationship.
 
@@ -509,9 +510,9 @@ Respond with ONLY a JSON array (no other text):
                     "stream": False,
                     "options": {
                         "temperature": self.temperature,
-                    }
+                    },
                 },
-                timeout=self.timeout
+                timeout=self.timeout,
             )
 
             if response.status_code == 200:
@@ -526,9 +527,7 @@ Respond with ONLY a JSON array (no other text):
             return []
 
     def _parse_response(
-        self,
-        content: str,
-        batch: List[EntityPair]
+        self, content: str, batch: List[EntityPair]
     ) -> List[LLMRelation]:
         """Parse Ollama response into relations."""
         relations = []
@@ -563,13 +562,15 @@ Respond with ONLY a JSON array (no other text):
                         rel_type = RelationType.RELATED_TO
 
                     if rel_type != RelationType.NONE:
-                        relations.append(LLMRelation(
-                            source=pair.source_text,
-                            target=pair.target_text,
-                            relation_type=rel_type,
-                            confidence=float(item.get("confidence", 0.7)),
-                            reasoning=item.get("reasoning", "")
-                        ))
+                        relations.append(
+                            LLMRelation(
+                                source=pair.source_text,
+                                target=pair.target_text,
+                                relation_type=rel_type,
+                                confidence=float(item.get("confidence", 0.7)),
+                                reasoning=item.get("reasoning", ""),
+                            )
+                        )
 
         except json.JSONDecodeError as e:
             logger.debug(f"Failed to parse Ollama response as JSON: {e}")
@@ -579,16 +580,15 @@ Respond with ONLY a JSON array (no other text):
         return relations
 
     def _fallback_parse(
-        self,
-        content: str,
-        batch: List[EntityPair]
+        self, content: str, batch: List[EntityPair]
     ) -> List[LLMRelation]:
         """Fallback parsing when JSON extraction fails."""
         import re
+
         relations = []
 
         # Look for patterns like "1. INTRODUCES" or "pair 1: DEVELOPS"
-        pattern = r'(?:pair\s*)?(\d+)[:\.\s]+([A-Z_]+)'
+        pattern = r"(?:pair\s*)?(\d+)[:\.\s]+([A-Z_]+)"
         matches = re.findall(pattern, content.upper())
 
         for pair_num, rel_type_str in matches:
@@ -598,13 +598,15 @@ Respond with ONLY a JSON array (no other text):
                     rel_type = RelationType(rel_type_str)
                     if rel_type != RelationType.NONE:
                         pair = batch[pair_idx]
-                        relations.append(LLMRelation(
-                            source=pair.source_text,
-                            target=pair.target_text,
-                            relation_type=rel_type,
-                            confidence=0.6,  # Lower confidence for fallback
-                            reasoning="Extracted via fallback pattern"
-                        ))
+                        relations.append(
+                            LLMRelation(
+                                source=pair.source_text,
+                                target=pair.target_text,
+                                relation_type=rel_type,
+                                confidence=0.6,  # Lower confidence for fallback
+                                reasoning="Extracted via fallback pattern",
+                            )
+                        )
                 except ValueError:
                     pass
 
@@ -614,6 +616,7 @@ Respond with ONLY a JSON array (no other text):
 # ============================================================================
 # LLAMA.CPP PROVIDER (Offline via llama-cpp-python)
 # ============================================================================
+
 
 class LlamaCppProvider(LLMProvider):
     """
@@ -633,7 +636,7 @@ class LlamaCppProvider(LLMProvider):
         n_ctx: int = 2048,
         n_threads: int = 4,
         temperature: float = 0.1,
-        max_tokens: int = 512
+        max_tokens: int = 512,
     ):
         self.model_path = model_path or os.getenv("LLAMA_MODEL_PATH")
         self.n_ctx = n_ctx
@@ -649,7 +652,8 @@ class LlamaCppProvider(LLMProvider):
             return self._available
 
         try:
-            from llama_cpp import Llama
+            from llama_cpp import Llama  # noqa: F401
+
             if self.model_path and os.path.exists(self.model_path):
                 self._available = True
             else:
@@ -665,19 +669,17 @@ class LlamaCppProvider(LLMProvider):
         """Lazy load the model."""
         if self._model is None and self.is_available():
             from llama_cpp import Llama
+
             logger.info(f"Loading llama.cpp model: {self.model_path}")
             self._model = Llama(
                 model_path=self.model_path,
                 n_ctx=self.n_ctx,
                 n_threads=self.n_threads,
-                verbose=False
+                verbose=False,
             )
         return self._model
 
-    def extract_relations(
-        self,
-        entity_pairs: List[EntityPair]
-    ) -> List[LLMRelation]:
+    def extract_relations(self, entity_pairs: List[EntityPair]) -> List[LLMRelation]:
         if not self.is_available():
             return []
 
@@ -713,7 +715,7 @@ Answer with just the relationship type:"""
                 prompt,
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                stop=["\n", ".", ","]
+                stop=["\n", ".", ","],
             )
 
             response = output["choices"][0]["text"].strip().upper()
@@ -727,7 +729,7 @@ Answer with just the relationship type:"""
                             target=pair.target_text,
                             relation_type=rel_type,
                             confidence=0.65,
-                            reasoning="Extracted via llama.cpp"
+                            reasoning="Extracted via llama.cpp",
                         )
                     break
 
@@ -735,6 +737,7 @@ Answer with just the relationship type:"""
             logger.debug(f"llama.cpp extraction failed for pair: {e}")
 
         return None
+
 
 class RelationCache:
     """Simple in-memory cache for extracted relations."""
@@ -757,7 +760,7 @@ class RelationCache:
         """Cache a relation."""
         if len(self._cache) >= self.max_size:
             # Remove oldest entries (simple LRU approximation)
-            keys_to_remove = list(self._cache.keys())[:self.max_size // 4]
+            keys_to_remove = list(self._cache.keys())[: self.max_size // 4]
             for key in keys_to_remove:
                 del self._cache[key]
 
@@ -772,6 +775,7 @@ class RelationCache:
 # ============================================================================
 # LLM RELATION EXTRACTOR
 # ============================================================================
+
 
 class LLMRelationExtractor:
     """
@@ -796,7 +800,7 @@ class LLMRelationExtractor:
         preferred_provider: str = "ollama",  # Default to Ollama
         enable_cache: bool = True,
         min_confidence: float = 0.5,
-        verbose: bool = True
+        verbose: bool = True,
     ):
         self.min_confidence = min_confidence
         self.cache = RelationCache() if enable_cache else None
@@ -807,8 +811,7 @@ class LLMRelationExtractor:
 
         # 1. Ollama (default - local LLM)
         self.providers["ollama"] = OllamaProvider(
-            model=ollama_model,
-            base_url=ollama_url
+            model=ollama_model, base_url=ollama_url
         )
 
         # 2. llama.cpp (offline)
@@ -867,9 +870,7 @@ class LLMRelationExtractor:
         return None
 
     def extract_relations(
-        self,
-        entity_pairs: List[EntityPair],
-        use_cache: bool = True
+        self, entity_pairs: List[EntityPair], use_cache: bool = True
     ) -> List[LLMRelation]:
         """
         Extract relations for entity pairs using LLM.
@@ -932,7 +933,10 @@ class LLMRelationExtractor:
                             # Find matching pair and cache
                             if self.cache:
                                 for pair in pairs_to_process:
-                                    if pair.source_text == rel.source and pair.target_text == rel.target:
+                                    if (
+                                        pair.source_text == rel.source
+                                        and pair.target_text == rel.target
+                                    ):
                                         self.cache.set(pair, rel)
                                         break
                         else:
@@ -955,10 +959,7 @@ class LLMRelationExtractor:
             raise LLMExtractionError(f"Extraction failed: {e}") from e
 
     def extract_from_text(
-        self,
-        text: str,
-        entities: List[Dict[str, Any]],
-        max_pairs: int = 50
+        self, text: str, entities: List[Dict[str, Any]], max_pairs: int = 50
     ) -> List[LLMRelation]:
         """
         Extract relations from text and entity list.
@@ -972,7 +973,7 @@ class LLMRelationExtractor:
             List of extracted relations
         """
         # Build entity pairs from sentences
-        sentences = [s.strip() for s in text.split('.') if s.strip()]
+        sentences = [s.strip() for s in text.split(".") if s.strip()]
         entity_pairs = []
 
         for sentence in sentences:
@@ -980,21 +981,22 @@ class LLMRelationExtractor:
 
             # Find entities in this sentence
             sent_entities = [
-                e for e in entities
-                if e.get('text', '').lower() in sent_lower
+                e for e in entities if e.get("text", "").lower() in sent_lower
             ]
 
             # Create pairs
             for i, e1 in enumerate(sent_entities):
-                for e2 in sent_entities[i+1:]:
-                    if e1['text'].lower() != e2['text'].lower():
-                        entity_pairs.append(EntityPair(
-                            source_text=e1['text'],
-                            source_type=e1.get('type', 'UNKNOWN'),
-                            target_text=e2['text'],
-                            target_type=e2.get('type', 'UNKNOWN'),
-                            context=sentence
-                        ))
+                for e2 in sent_entities[i + 1 :]:
+                    if e1["text"].lower() != e2["text"].lower():
+                        entity_pairs.append(
+                            EntityPair(
+                                source_text=e1["text"],
+                                source_type=e1.get("type", "UNKNOWN"),
+                                target_text=e2["text"],
+                                target_type=e2.get("type", "UNKNOWN"),
+                                context=sentence,
+                            )
+                        )
 
                         if len(entity_pairs) >= max_pairs:
                             break
@@ -1010,6 +1012,7 @@ class LLMRelationExtractor:
 # FACTORY FUNCTION
 # ============================================================================
 
+
 def create_llm_extractor(
     openai_key: Optional[str] = None,
     anthropic_key: Optional[str] = None,
@@ -1017,7 +1020,7 @@ def create_llm_extractor(
     ollama_url: str = "http://localhost:11434",
     llama_model_path: Optional[str] = None,
     preferred_provider: str = "ollama",
-    **kwargs
+    **kwargs,
 ) -> LLMRelationExtractor:
     """
     Factory function to create an LLM relation extractor.
@@ -1058,5 +1061,5 @@ def create_llm_extractor(
         ollama_url=ollama_url,
         llama_model_path=llama_model_path,
         preferred_provider=preferred_provider,
-        **kwargs
+        **kwargs,
     )

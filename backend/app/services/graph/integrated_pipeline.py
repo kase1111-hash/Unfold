@@ -15,7 +15,7 @@ import logging
 import sys
 import time
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple, Any
+from typing import List, Dict, Optional, Any
 from enum import Enum
 
 from app.models.graph import RelationType
@@ -26,12 +26,16 @@ logger = logging.getLogger(__name__)
 
 class PipelineError(Exception):
     """Exception raised for pipeline errors."""
+
     pass
 
 
 class PipelineStepError(Exception):
     """Exception raised for individual pipeline step errors."""
-    def __init__(self, step: str, message: str, original_error: Optional[Exception] = None):
+
+    def __init__(
+        self, step: str, message: str, original_error: Optional[Exception] = None
+    ):
         self.step = step
         self.message = message
         self.original_error = original_error
@@ -41,6 +45,7 @@ class PipelineStepError(Exception):
 @dataclass
 class ExtractedRelation:
     """Unified relation format for the integrated pipeline."""
+
     source_text: str
     target_text: str
     relation_type: RelationType
@@ -52,6 +57,7 @@ class ExtractedRelation:
 
 class ExtractionMethod(Enum):
     """Extraction methods used in the pipeline."""
+
     COREFERENCE = "coreference"
     DEPENDENCY = "dependency"
     LLM = "llm"
@@ -162,6 +168,7 @@ class IntegratedRelationExtractor:
         if self._coref_resolver is None and self.use_coreference:
             try:
                 from app.services.graph.coreference import CoreferenceResolver
+
                 self._coref_resolver = CoreferenceResolver(use_llm=False)
             except ImportError as e:
                 logger.warning(f"Coreference module unavailable: {e}")
@@ -173,6 +180,7 @@ class IntegratedRelationExtractor:
         if self._dep_parser is None and self.use_dependency:
             try:
                 from app.services.graph.dependency_parsing import DependencyParser
+
                 self._dep_parser = DependencyParser(use_spacy=True)
             except ImportError as e:
                 logger.warning(f"Dependency parsing module unavailable: {e}")
@@ -184,6 +192,7 @@ class IntegratedRelationExtractor:
         if self._llm_extractor is None and self.use_llm:
             try:
                 from app.services.graph.llm_relations import LLMRelationExtractor
+
                 self._llm_extractor = LLMRelationExtractor(
                     preferred_provider=self._llm_config["preferred_provider"],
                     ollama_model=self._llm_config["ollama_model"],
@@ -236,8 +245,7 @@ class IntegratedRelationExtractor:
             # Convert entities to dict format for modules that expect it
             try:
                 entity_dicts = [
-                    {"text": e.text, "type": e.entity_type.value}
-                    for e in entities
+                    {"text": e.text, "type": e.entity_type.value} for e in entities
                 ]
             except AttributeError as e:
                 self._log(f"Invalid entity format: {e}", "error")
@@ -254,7 +262,10 @@ class IntegratedRelationExtractor:
                 try:
                     resolved = self.coref_resolver.resolve(text, entity_dicts)
                     resolved_text = resolved.resolved_text
-                    self._log(f"Step 1/4: Resolved {len(resolved.resolutions)} coreferences", "success")
+                    self._log(
+                        f"Step 1/4: Resolved {len(resolved.resolutions)} coreferences",
+                        "success",
+                    )
                     steps_completed += 1
                 except Exception as e:
                     self._record_step_error("coreference", e)
@@ -267,17 +278,26 @@ class IntegratedRelationExtractor:
             self._log("Step 2/4: Dependency parsing...", "progress")
             if self.dep_parser:
                 try:
-                    dep_relations = self.dep_parser.extract_relations(resolved_text, entity_dicts)
+                    dep_relations = self.dep_parser.extract_relations(
+                        resolved_text, entity_dicts
+                    )
                     for rel in dep_relations:
-                        all_relations.append(ExtractedRelation(
-                            source_text=rel.subject,
-                            target_text=rel.object,
-                            relation_type=self._map_relation_type(rel.relation_type),
-                            confidence=rel.confidence,
-                            context=rel.evidence,
-                            extraction_method=ExtractionMethod.DEPENDENCY.value,
-                        ))
-                    self._log(f"Step 2/4: Extracted {len(dep_relations)} dependency relations", "success")
+                        all_relations.append(
+                            ExtractedRelation(
+                                source_text=rel.subject,
+                                target_text=rel.object,
+                                relation_type=self._map_relation_type(
+                                    rel.relation_type
+                                ),
+                                confidence=rel.confidence,
+                                context=rel.evidence,
+                                extraction_method=ExtractionMethod.DEPENDENCY.value,
+                            )
+                        )
+                    self._log(
+                        f"Step 2/4: Extracted {len(dep_relations)} dependency relations",
+                        "success",
+                    )
                     steps_completed += 1
                 except Exception as e:
                     self._record_step_error("dependency", e)
@@ -290,23 +310,31 @@ class IntegratedRelationExtractor:
             self._log("Step 3/4: LLM extraction...", "progress")
             if self.llm_extractor and self.llm_extractor.is_available():
                 try:
-                    from app.services.graph.llm_relations import EntityPair
 
                     # Build entity pairs for LLM
                     entity_pairs = self._build_entity_pairs(resolved_text, entity_dicts)
 
                     if entity_pairs:
-                        llm_relations = self.llm_extractor.extract_relations(entity_pairs)
+                        llm_relations = self.llm_extractor.extract_relations(
+                            entity_pairs
+                        )
                         for rel in llm_relations:
-                            all_relations.append(ExtractedRelation(
-                                source_text=rel.source,
-                                target_text=rel.target,
-                                relation_type=self._map_llm_relation_type(rel.relation_type.value),
-                                confidence=rel.confidence,
-                                context=rel.reasoning,
-                                extraction_method=ExtractionMethod.LLM.value,
-                            ))
-                        self._log(f"Step 3/4: Extracted {len(llm_relations)} LLM relations", "success")
+                            all_relations.append(
+                                ExtractedRelation(
+                                    source_text=rel.source,
+                                    target_text=rel.target,
+                                    relation_type=self._map_llm_relation_type(
+                                        rel.relation_type.value
+                                    ),
+                                    confidence=rel.confidence,
+                                    context=rel.reasoning,
+                                    extraction_method=ExtractionMethod.LLM.value,
+                                )
+                            )
+                        self._log(
+                            f"Step 3/4: Extracted {len(llm_relations)} LLM relations",
+                            "success",
+                        )
                     else:
                         self._log("Step 3/4: No entity pairs to process", "warning")
                     steps_completed += 1
@@ -321,9 +349,14 @@ class IntegratedRelationExtractor:
             self._log("Step 4/4: Pattern extraction...", "progress")
             if self.use_patterns:
                 try:
-                    pattern_relations = self._extract_patterns(resolved_text, entity_dicts)
+                    pattern_relations = self._extract_patterns(
+                        resolved_text, entity_dicts
+                    )
                     all_relations.extend(pattern_relations)
-                    self._log(f"Step 4/4: Extracted {len(pattern_relations)} pattern relations", "success")
+                    self._log(
+                        f"Step 4/4: Extracted {len(pattern_relations)} pattern relations",
+                        "success",
+                    )
                     steps_completed += 1
                 except Exception as e:
                     self._record_step_error("pattern", e)
@@ -335,17 +368,23 @@ class IntegratedRelationExtractor:
             # Bonus: Co-occurrence fallback for uncovered pairs
             if len(all_relations) < max_relations // 2:
                 try:
-                    cooc_relations = self._extract_cooccurrence(resolved_text, entity_dicts, all_relations)
+                    cooc_relations = self._extract_cooccurrence(
+                        resolved_text, entity_dicts, all_relations
+                    )
                     all_relations.extend(cooc_relations)
                     if cooc_relations:
-                        self._log(f"Added {len(cooc_relations)} co-occurrence relations")
+                        self._log(
+                            f"Added {len(cooc_relations)} co-occurrence relations"
+                        )
                 except Exception as e:
                     self._log(f"Co-occurrence extraction failed: {e}", "warning")
 
             # Deduplicate and filter
             try:
                 relations = self._deduplicate_relations(all_relations)
-                relations = [r for r in relations if r.confidence >= self.min_confidence]
+                relations = [
+                    r for r in relations if r.confidence >= self.min_confidence
+                ]
                 relations.sort(key=lambda r: r.confidence, reverse=True)
             except Exception as e:
                 self._log(f"Deduplication failed: {e}", "error")
@@ -355,9 +394,14 @@ class IntegratedRelationExtractor:
             elapsed = time.time() - start_time
             self._log("=" * 50)
             if steps_failed == 0:
-                self._log(f"Pipeline completed successfully in {elapsed:.2f}s", "success")
+                self._log(
+                    f"Pipeline completed successfully in {elapsed:.2f}s", "success"
+                )
             else:
-                self._log(f"Pipeline completed with {steps_failed} errors in {elapsed:.2f}s", "warning")
+                self._log(
+                    f"Pipeline completed with {steps_failed} errors in {elapsed:.2f}s",
+                    "warning",
+                )
             self._log(f"Result: {len(relations)} relations extracted")
             self._log("=" * 50)
 
@@ -371,10 +415,7 @@ class IntegratedRelationExtractor:
             raise PipelineError(f"Pipeline failed: {e}") from e
 
     def _build_entity_pairs(
-        self,
-        text: str,
-        entities: List[Dict],
-        max_pairs: int = 50
+        self, text: str, entities: List[Dict], max_pairs: int = 50
     ) -> List[Any]:
         """Build entity pairs for LLM extraction."""
         from app.services.graph.llm_relations import EntityPair
@@ -386,22 +427,21 @@ class IntegratedRelationExtractor:
             sent_lower = sent.lower()
 
             # Find entities in this sentence
-            sent_entities = [
-                e for e in entities
-                if e['text'].lower() in sent_lower
-            ]
+            sent_entities = [e for e in entities if e["text"].lower() in sent_lower]
 
             # Create pairs
             for i, e1 in enumerate(sent_entities):
-                for e2 in sent_entities[i+1:]:
-                    if e1['text'].lower() != e2['text'].lower():
-                        pairs.append(EntityPair(
-                            source_text=e1['text'],
-                            source_type=e1.get('type', 'UNKNOWN'),
-                            target_text=e2['text'],
-                            target_type=e2.get('type', 'UNKNOWN'),
-                            context=sent
-                        ))
+                for e2 in sent_entities[i + 1 :]:
+                    if e1["text"].lower() != e2["text"].lower():
+                        pairs.append(
+                            EntityPair(
+                                source_text=e1["text"],
+                                source_type=e1.get("type", "UNKNOWN"),
+                                target_text=e2["text"],
+                                target_type=e2.get("type", "UNKNOWN"),
+                                context=sent,
+                            )
+                        )
 
                         if len(pairs) >= max_pairs:
                             return pairs
@@ -409,26 +449,24 @@ class IntegratedRelationExtractor:
         return pairs
 
     def _extract_patterns(
-        self,
-        text: str,
-        entities: List[Dict]
+        self, text: str, entities: List[Dict]
     ) -> List[ExtractedRelation]:
         """Pattern-based relation extraction."""
         import re
 
         relations = []
-        entity_texts = {e['text'].lower(): e for e in entities}
+        entity_texts = {e["text"].lower(): e for e in entities}
         text_lower = text.lower()
 
         patterns = [
-            (r'(\w+(?:\s+et\s+al\.)?)\s+introduced\s+(?:the\s+)?(\w+)', 'INTRODUCES'),
-            (r'(\w+(?:\s+et\s+al\.)?)\s+developed\s+(?:the\s+)?(\w+)', 'DEVELOPS'),
-            (r'(\w+)\s+uses?\s+(\w+)', 'USES'),
-            (r'(\w+)\s+trained\s+on\s+(\w+)', 'TRAINED_ON'),
-            (r'(\w+)\s+evaluated\s+on\s+(\w+)', 'EVALUATED_ON'),
-            (r'(\w+)\s+at\s+(\w+(?:\s+\w+)?)', 'AFFILIATED_WITH'),
-            (r'(\w+)\s+outperforms?\s+(\w+)', 'OUTPERFORMS'),
-            (r'unlike\s+(\w+).*?,?\s*(?:the\s+)?(\w+)', 'CONTRASTS_WITH'),
+            (r"(\w+(?:\s+et\s+al\.)?)\s+introduced\s+(?:the\s+)?(\w+)", "INTRODUCES"),
+            (r"(\w+(?:\s+et\s+al\.)?)\s+developed\s+(?:the\s+)?(\w+)", "DEVELOPS"),
+            (r"(\w+)\s+uses?\s+(\w+)", "USES"),
+            (r"(\w+)\s+trained\s+on\s+(\w+)", "TRAINED_ON"),
+            (r"(\w+)\s+evaluated\s+on\s+(\w+)", "EVALUATED_ON"),
+            (r"(\w+)\s+at\s+(\w+(?:\s+\w+)?)", "AFFILIATED_WITH"),
+            (r"(\w+)\s+outperforms?\s+(\w+)", "OUTPERFORMS"),
+            (r"unlike\s+(\w+).*?,?\s*(?:the\s+)?(\w+)", "CONTRASTS_WITH"),
         ]
 
         for pattern, rel_type in patterns:
@@ -440,31 +478,28 @@ class IntegratedRelationExtractor:
                 target_match = self._match_entity(target, entity_texts)
 
                 if source_match and target_match and source_match != target_match:
-                    relations.append(ExtractedRelation(
-                        source_text=entity_texts[source_match]['text'],
-                        target_text=entity_texts[target_match]['text'],
-                        relation_type=self._map_relation_type(rel_type),
-                        confidence=0.7,
-                        context=match.group(0),
-                        extraction_method=ExtractionMethod.PATTERN.value,
-                    ))
+                    relations.append(
+                        ExtractedRelation(
+                            source_text=entity_texts[source_match]["text"],
+                            target_text=entity_texts[target_match]["text"],
+                            relation_type=self._map_relation_type(rel_type),
+                            confidence=0.7,
+                            context=match.group(0),
+                            extraction_method=ExtractionMethod.PATTERN.value,
+                        )
+                    )
 
         return relations
 
     def _extract_cooccurrence(
-        self,
-        text: str,
-        entities: List[Dict],
-        existing: List[ExtractedRelation]
+        self, text: str, entities: List[Dict], existing: List[ExtractedRelation]
     ) -> List[ExtractedRelation]:
         """Co-occurrence based relation extraction."""
         relations = []
-        entity_texts = {e['text'].lower(): e for e in entities}
 
         # Get existing pairs
         existing_pairs = {
-            (r.source_text.lower(), r.target_text.lower())
-            for r in existing
+            (r.source_text.lower(), r.target_text.lower()) for r in existing
         }
 
         sentences = self._split_sentences(text)
@@ -473,39 +508,38 @@ class IntegratedRelationExtractor:
             sent_lower = sent.lower()
 
             # Find entities in sentence
-            sent_entities = [
-                e for e in entities
-                if e['text'].lower() in sent_lower
-            ]
+            sent_entities = [e for e in entities if e["text"].lower() in sent_lower]
 
             # Create pairs for uncovered entities
             for i, e1 in enumerate(sent_entities):
-                for e2 in sent_entities[i+1:]:
-                    e1_lower = e1['text'].lower()
-                    e2_lower = e2['text'].lower()
+                for e2 in sent_entities[i + 1 :]:
+                    e1_lower = e1["text"].lower()
+                    e2_lower = e2["text"].lower()
 
                     if e1_lower != e2_lower:
                         pair = (e1_lower, e2_lower)
                         pair_rev = (e2_lower, e1_lower)
 
-                        if pair not in existing_pairs and pair_rev not in existing_pairs:
-                            relations.append(ExtractedRelation(
-                                source_text=e1['text'],
-                                target_text=e2['text'],
-                                relation_type=RelationType.RELATED_TO,
-                                confidence=0.5,
-                                context=sent[:100],
-                                extraction_method=ExtractionMethod.COOCCURRENCE.value,
-                            ))
+                        if (
+                            pair not in existing_pairs
+                            and pair_rev not in existing_pairs
+                        ):
+                            relations.append(
+                                ExtractedRelation(
+                                    source_text=e1["text"],
+                                    target_text=e2["text"],
+                                    relation_type=RelationType.RELATED_TO,
+                                    confidence=0.5,
+                                    context=sent[:100],
+                                    extraction_method=ExtractionMethod.COOCCURRENCE.value,
+                                )
+                            )
                             existing_pairs.add(pair)
 
         return relations
 
     def _match_entity(
-        self,
-        text: str,
-        entity_texts: Dict[str, Dict],
-        prefer_longer: bool = True
+        self, text: str, entity_texts: Dict[str, Dict], prefer_longer: bool = True
     ) -> Optional[str]:
         """Match text to an entity, preferring longer matches."""
         text_lower = text.lower().strip()
@@ -529,8 +563,7 @@ class IntegratedRelationExtractor:
         return matches[0]
 
     def _deduplicate_relations(
-        self,
-        relations: List[ExtractedRelation]
+        self, relations: List[ExtractedRelation]
     ) -> List[ExtractedRelation]:
         """Remove duplicate relations, keeping highest confidence."""
         seen = {}
@@ -539,7 +572,7 @@ class IntegratedRelationExtractor:
             # Handle relation_type as either enum or string
             rel_type_value = (
                 rel.relation_type.value
-                if hasattr(rel.relation_type, 'value')
+                if hasattr(rel.relation_type, "value")
                 else str(rel.relation_type)
             )
 
@@ -603,20 +636,20 @@ class IntegratedRelationExtractor:
 
         protected = text
         abbrevs = [
-            (r'\bet al\.', 'ET_AL_P'),
-            (r'\bi\.e\.', 'IE_P'),
-            (r'\be\.g\.', 'EG_P'),
-            (r'\bvs\.', 'VS_P'),
+            (r"\bet al\.", "ET_AL_P"),
+            (r"\bi\.e\.", "IE_P"),
+            (r"\be\.g\.", "EG_P"),
+            (r"\bvs\.", "VS_P"),
         ]
         for pattern, repl in abbrevs:
             protected = re.sub(pattern, repl, protected)
 
-        sentences = re.split(r'(?<=[.!?])\s+', protected)
+        sentences = re.split(r"(?<=[.!?])\s+", protected)
 
         restored = []
         for sent in sentences:
             for pattern, repl in abbrevs:
-                original = pattern.replace(r'\b', '').replace('\\', '')
+                original = pattern.replace(r"\b", "").replace("\\", "")
                 sent = sent.replace(repl, original)
             restored.append(sent)
 
@@ -637,9 +670,7 @@ _integrated_extractor: Optional[IntegratedRelationExtractor] = None
 
 
 def get_integrated_extractor(
-    use_llm: bool = True,
-    llm_provider: str = "ollama",
-    **kwargs
+    use_llm: bool = True, llm_provider: str = "ollama", **kwargs
 ) -> IntegratedRelationExtractor:
     """
     Get or create integrated extractor instance.
@@ -656,9 +687,7 @@ def get_integrated_extractor(
 
     if _integrated_extractor is None:
         _integrated_extractor = IntegratedRelationExtractor(
-            use_llm=use_llm,
-            llm_provider=llm_provider,
-            **kwargs
+            use_llm=use_llm, llm_provider=llm_provider, **kwargs
         )
 
     return _integrated_extractor

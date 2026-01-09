@@ -13,6 +13,7 @@ import numpy as np
 # Optional import for sentence_transformers
 try:
     from sentence_transformers import SentenceTransformer
+
     HAS_SENTENCE_TRANSFORMERS = True
 except ImportError:
     SentenceTransformer = None  # type: ignore
@@ -40,7 +41,9 @@ class RelevanceScorer:
                     "sentence_transformers is required for semantic scoring. "
                     "Install with: pip install sentence-transformers"
                 )
-            model_name = getattr(settings, 'EMBEDDING_MODEL', None) or "all-MiniLM-L6-v2"
+            model_name = (
+                getattr(settings, "EMBEDDING_MODEL", None) or "all-MiniLM-L6-v2"
+            )
             self._model = SentenceTransformer(model_name)
         return self._model
 
@@ -51,18 +54,95 @@ class RelevanceScorer:
         tokens = text.split()
         # Remove very short tokens and stopwords
         stopwords = {
-            "the", "a", "an", "is", "are", "was", "were", "be", "been",
-            "being", "have", "has", "had", "do", "does", "did", "will",
-            "would", "could", "should", "may", "might", "must", "shall",
-            "can", "need", "dare", "ought", "used", "to", "of", "in",
-            "for", "on", "with", "at", "by", "from", "as", "into",
-            "through", "during", "before", "after", "above", "below",
-            "between", "under", "again", "further", "then", "once",
-            "here", "there", "when", "where", "why", "how", "all",
-            "each", "few", "more", "most", "other", "some", "such",
-            "no", "nor", "not", "only", "own", "same", "so", "than",
-            "too", "very", "just", "and", "but", "if", "or", "because",
-            "until", "while", "this", "that", "these", "those", "it",
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "can",
+            "need",
+            "dare",
+            "ought",
+            "used",
+            "to",
+            "of",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "into",
+            "through",
+            "during",
+            "before",
+            "after",
+            "above",
+            "below",
+            "between",
+            "under",
+            "again",
+            "further",
+            "then",
+            "once",
+            "here",
+            "there",
+            "when",
+            "where",
+            "why",
+            "how",
+            "all",
+            "each",
+            "few",
+            "more",
+            "most",
+            "other",
+            "some",
+            "such",
+            "no",
+            "nor",
+            "not",
+            "only",
+            "own",
+            "same",
+            "so",
+            "than",
+            "too",
+            "very",
+            "just",
+            "and",
+            "but",
+            "if",
+            "or",
+            "because",
+            "until",
+            "while",
+            "this",
+            "that",
+            "these",
+            "those",
+            "it",
         }
         return [t for t in tokens if len(t) > 2 and t not in stopwords]
 
@@ -92,9 +172,7 @@ class RelevanceScorer:
 
         # Compute IDF with smoothing
         for term, freq in doc_freq.items():
-            self._idf_cache[term] = math.log(
-                (self._corpus_size + 1) / (freq + 1)
-            ) + 1
+            self._idf_cache[term] = math.log((self._corpus_size + 1) / (freq + 1)) + 1
 
     def compute_tfidf_score(
         self,
@@ -193,8 +271,7 @@ class RelevanceScorer:
         if HAS_SENTENCE_TRANSFORMERS:
             semantic_score = self.compute_semantic_score(text, query)
             combined_score = (
-                tfidf_weight * tfidf_score +
-                semantic_weight * semantic_score
+                tfidf_weight * tfidf_score + semantic_weight * semantic_score
             )
         else:
             semantic_score = tfidf_score  # Fallback
@@ -242,12 +319,14 @@ class RelevanceScorer:
 
         for i, passage in enumerate(passages):
             score_data = self.score_relevance(passage, query)
-            results.append({
-                "index": i,
-                "passage": passage[:200] + "..." if len(passage) > 200 else passage,
-                "full_passage": passage,
-                **score_data,
-            })
+            results.append(
+                {
+                    "index": i,
+                    "passage": passage[:200] + "..." if len(passage) > 200 else passage,
+                    "full_passage": passage,
+                    **score_data,
+                }
+            )
 
         # Sort by combined score descending
         results.sort(key=lambda x: x["combined_score"], reverse=True)
@@ -278,12 +357,14 @@ class RelevanceScorer:
             text = f"{section.get('title', '')} {section.get('content', '')}"
             score_data = self.score_relevance(text, learning_goal)
 
-            scored_sections.append({
-                **section,
-                "focus_score": score_data["combined_score"],
-                "relevance_level": score_data["relevance_level"],
-                "should_expand": score_data["combined_score"] >= 0.5,
-            })
+            scored_sections.append(
+                {
+                    **section,
+                    "focus_score": score_data["combined_score"],
+                    "relevance_level": score_data["relevance_level"],
+                    "should_expand": score_data["combined_score"] >= 0.5,
+                }
+            )
 
         # Sort by focus score
         scored_sections.sort(key=lambda x: x["focus_score"], reverse=True)

@@ -3,7 +3,6 @@ Integration tests for the Adaptive Learning system.
 Tests flashcards, spaced repetition, engagement tracking, and exports.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 
@@ -192,7 +191,11 @@ class TestEngagementTracking:
         assert response.status_code == 401
 
     def test_track_engagement_with_auth(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test tracking engagement with authentication."""
         engagement_data = {
@@ -208,7 +211,11 @@ class TestEngagementTracking:
         assert response.status_code in [200, 201, 401, 422]
 
     def test_get_engagement_stats(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting engagement statistics."""
         response = client.get(
@@ -241,7 +248,11 @@ class TestLearningProgress:
             assert isinstance(data, dict)
 
     def test_get_progress_by_document(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting progress for a specific document."""
         response = client.get(
@@ -293,7 +304,11 @@ class TestFocusMode:
     """Test focus mode and relevance scoring."""
 
     def test_get_focus_sections(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting focus sections for a document."""
         response = client.get(
@@ -303,7 +318,11 @@ class TestFocusMode:
         assert response.status_code in [200, 401, 404]
 
     def test_get_focus_sections_with_complexity(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting focus sections with complexity level."""
         response = client.get(
@@ -326,7 +345,11 @@ class TestFlashcardGeneration:
         assert response.status_code == 401
 
     def test_generate_flashcards_with_auth(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test generating flashcards from a document."""
         gen_data = {"max_cards": 10, "difficulty": "medium"}

@@ -139,6 +139,7 @@ async def init_all_databases() -> None:
     # Initialize Redis cache (optional)
     try:
         from app.services.cache import init_redis
+
         await init_redis()
     except Exception:
         pass  # Redis is optional
@@ -157,6 +158,7 @@ async def close_all_databases() -> None:
     # Close Redis cache
     try:
         from app.services.cache import close_redis
+
         await close_redis()
     except Exception:
         pass
@@ -177,6 +179,7 @@ async def check_all_connections() -> dict[str, dict]:
     # Check Redis
     try:
         from app.services.cache import check_redis_health
+
         result["redis"] = await check_redis_health()
     except Exception:
         result["redis"] = {"status": "unavailable"}

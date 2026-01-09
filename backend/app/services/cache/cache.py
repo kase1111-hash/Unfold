@@ -7,7 +7,6 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import Optional, Any, Callable, TypeVar
 from collections import OrderedDict
 from functools import wraps
@@ -19,6 +18,7 @@ T = TypeVar("T")
 @dataclass
 class CacheEntry:
     """A single cache entry with metadata."""
+
     key: str
     value: Any
     created_at: float
@@ -39,6 +39,7 @@ class CacheEntry:
 @dataclass
 class CacheStats:
     """Cache statistics."""
+
     hits: int = 0
     misses: int = 0
     evictions: int = 0
@@ -189,8 +190,7 @@ class LRUCache:
         """
         async with self._lock:
             expired_keys = [
-                key for key, entry in self._cache.items()
-                if entry.is_expired
+                key for key, entry in self._cache.items() if entry.is_expired
             ]
             for key in expired_keys:
                 del self._cache[key]
@@ -229,12 +229,12 @@ class CacheManager:
     # Cache namespaces for different data types
     NAMESPACES = {
         "documents": {"max_size": 500, "ttl": 3600},  # 1 hour
-        "graphs": {"max_size": 200, "ttl": 1800},      # 30 min
-        "embeddings": {"max_size": 1000, "ttl": 7200}, # 2 hours
-        "api_responses": {"max_size": 500, "ttl": 300}, # 5 min
+        "graphs": {"max_size": 200, "ttl": 1800},  # 30 min
+        "embeddings": {"max_size": 1000, "ttl": 7200},  # 2 hours
+        "api_responses": {"max_size": 500, "ttl": 300},  # 5 min
         "user_sessions": {"max_size": 1000, "ttl": 3600},
         "citations": {"max_size": 500, "ttl": 3600},
-        "ethics": {"max_size": 200, "ttl": 600},       # 10 min
+        "ethics": {"max_size": 200, "ttl": 600},  # 10 min
     }
 
     def __init__(self):
@@ -343,6 +343,7 @@ def cached(
         async def get_document(doc_id: str):
             ...
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
@@ -362,6 +363,7 @@ def cached(
             return result
 
         return wrapper
+
     return decorator
 
 
@@ -378,6 +380,7 @@ def cache_invalidate(namespace: str, key_pattern: str):
         async def update_document(doc_id: str, data: dict):
             ...
     """
+
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         @wraps(func)
         async def wrapper(*args, **kwargs) -> T:
@@ -393,6 +396,7 @@ def cache_invalidate(namespace: str, key_pattern: str):
             return result
 
         return wrapper
+
     return decorator
 
 

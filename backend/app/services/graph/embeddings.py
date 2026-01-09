@@ -1,10 +1,9 @@
 """Embedding service for generating vector representations."""
 
-import asyncio
 from typing import Any
 
 from app.config import get_settings
-from app.db.vector import VectorStore, faiss_add_vectors, faiss_search
+from app.db.vector import faiss_add_vectors, faiss_search
 
 settings = get_settings()
 
@@ -35,6 +34,7 @@ class EmbeddingService:
                 raise ValueError("OPENAI_API_KEY not configured")
 
             from openai import OpenAI
+
             self._client = OpenAI(api_key=settings.openai_api_key)
 
         return self._client
@@ -68,12 +68,11 @@ class EmbeddingService:
 
         # Process in batches
         for i in range(0, len(texts), self.batch_size):
-            batch = texts[i:i + self.batch_size]
+            batch = texts[i : i + self.batch_size]
 
             # Clean texts (remove newlines, limit length)
             cleaned_batch = [
-                text.replace("\n", " ")[:8191]  # Max 8191 tokens
-                for text in batch
+                text.replace("\n", " ")[:8191] for text in batch  # Max 8191 tokens
             ]
 
             response = client.embeddings.create(
@@ -165,6 +164,7 @@ class LocalEmbeddingService:
         if self._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
+
                 self._model = SentenceTransformer(self.model_name)
             except ImportError:
                 raise ImportError(
@@ -264,7 +264,9 @@ _openai_service: EmbeddingService | None = None
 _local_service: LocalEmbeddingService | None = None
 
 
-def get_embedding_service(use_openai: bool = True) -> EmbeddingService | LocalEmbeddingService:
+def get_embedding_service(
+    use_openai: bool = True,
+) -> EmbeddingService | LocalEmbeddingService:
     """Get embedding service instance.
 
     Args:

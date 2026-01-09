@@ -1,8 +1,6 @@
 """Knowledge graph API endpoints."""
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser
@@ -10,8 +8,6 @@ from app.models.graph import (
     GraphNode,
     GraphNodeCreate,
     GraphRelation,
-    GraphSearchRequest,
-    GraphTraversalRequest,
     NodeType,
     RelationType,
 )
@@ -28,7 +24,9 @@ class BuildGraphRequest(BaseModel):
     text: str = Field(..., min_length=10, max_length=50000, description="Source text")
     source_doc_id: str = Field(..., description="Source document ID")
     extract_relations: bool = Field(True, description="Whether to extract relations")
-    generate_embeddings: bool = Field(True, description="Whether to generate embeddings")
+    generate_embeddings: bool = Field(
+        True, description="Whether to generate embeddings"
+    )
 
 
 class BuildGraphResponse(BaseModel):
@@ -251,7 +249,9 @@ async def search_nodes(
 )
 async def get_related_nodes(
     node_id: str,
-    relation_types: list[RelationType] | None = Query(None, description="Filter by relation types"),
+    relation_types: list[RelationType] | None = Query(
+        None, description="Filter by relation types"
+    ),
     max_depth: int = Query(2, ge=1, le=5, description="Maximum traversal depth"),
     limit: int = Query(50, ge=1, le=200, description="Maximum results"),
 ) -> NodeListResponse:
@@ -370,7 +370,10 @@ async def get_paper(paper_id: str) -> PaperSearchResponse:
     if paper is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "PAPER_NOT_FOUND", "message": f"Paper {paper_id} not found"},
+            detail={
+                "code": "PAPER_NOT_FOUND",
+                "message": f"Paper {paper_id} not found",
+            },
         )
 
     return PaperSearchResponse(

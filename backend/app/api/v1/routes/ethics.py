@@ -25,20 +25,24 @@ router = APIRouter(prefix="/ethics", tags=["ethics"])
 
 # ============== Pydantic Models ==============
 
+
 class ProvenanceCreateRequest(BaseModel):
     """Request to create content provenance."""
+
     document_id: str = Field(..., description="Document identifier")
     content: str = Field(..., description="Document content")
 
 
 class ProvenanceVerifyRequest(BaseModel):
     """Request to verify content integrity."""
+
     credential_id: str = Field(..., description="Credential identifier")
     content: str = Field(..., description="Content to verify")
 
 
 class ProvenanceAssertionRequest(BaseModel):
     """Request to add assertion to credential."""
+
     credential_id: str
     assertion_type: str = Field(default="ai_processed")
     actor: str = Field(default="system")
@@ -48,6 +52,7 @@ class ProvenanceAssertionRequest(BaseModel):
 
 class BiasAuditRequest(BaseModel):
     """Request to audit document for bias."""
+
     document_id: str
     content: str
     sections: Optional[list[str]] = None
@@ -55,6 +60,7 @@ class BiasAuditRequest(BaseModel):
 
 class ConsentRequest(BaseModel):
     """Request to record consent."""
+
     consent_type: str = Field(..., description="Type of consent")
     granted: bool = Field(..., description="Whether consent is granted")
     ip_address: Optional[str] = None
@@ -63,11 +69,13 @@ class ConsentRequest(BaseModel):
 
 class ConsentWithdrawRequest(BaseModel):
     """Request to withdraw consent."""
+
     consent_type: str
 
 
 class PrivacyPreferencesRequest(BaseModel):
     """Request to update privacy preferences."""
+
     transparency_level: Optional[str] = None
     receive_reports: Optional[bool] = None
     allow_aggregated: Optional[bool] = None
@@ -75,6 +83,7 @@ class PrivacyPreferencesRequest(BaseModel):
 
 class AIOperationRequest(BaseModel):
     """Request to record AI operation."""
+
     operation_type: str
     purpose: str
     model_used: Optional[str] = None
@@ -87,6 +96,7 @@ class AIOperationRequest(BaseModel):
 
 class MetricRequest(BaseModel):
     """Request to record ethics metric."""
+
     metric_type: str
     name: str
     value: float
@@ -95,6 +105,7 @@ class MetricRequest(BaseModel):
 
 
 # ============== Provenance Tracking ==============
+
 
 @router.post("/provenance/create")
 async def create_provenance(
@@ -211,6 +222,7 @@ async def get_document_provenance(
 
 class ManifestCreateRequest(BaseModel):
     """Request to create provenance manifest."""
+
     document_id: str
     title: str
     content: str
@@ -244,6 +256,7 @@ async def create_manifest(
 
 
 # ============== Bias Auditing ==============
+
 
 @router.post("/bias/audit")
 async def audit_document(
@@ -305,6 +318,7 @@ async def get_bias_categories(
 
 
 # ============== Privacy Compliance ==============
+
 
 @router.post("/privacy/consent")
 async def record_consent(
@@ -433,7 +447,9 @@ async def export_data(
         "user_id": current_user.user_id,
         "username": current_user.username,
         "email": compliance.mask_email(current_user.email),
-        "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+        "created_at": (
+            current_user.created_at.isoformat() if current_user.created_at else None
+        ),
     }
 
     result = compliance.export_user_data(
@@ -474,6 +490,7 @@ async def get_retention_policy(
 
 
 # ============== Ethics Analytics ==============
+
 
 @router.post("/analytics/operation")
 async def record_operation(
@@ -601,7 +618,7 @@ async def update_preferences(
         except ValueError:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid transparency level. Valid levels: {[l.value for l in TransparencyLevel]}",
+                detail=f"Invalid transparency level. Valid levels: {[level.value for level in TransparencyLevel]}",
             )
 
     profile = analytics.update_profile_preferences(

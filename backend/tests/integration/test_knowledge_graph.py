@@ -197,23 +197,19 @@ class TestExternalKnowledgeLinking:
 
     def test_semantic_scholar_search(self, client: TestClient, api_prefix: str):
         """Test Semantic Scholar paper search."""
-        response = client.get(
-            f"{api_prefix}/graph/link/papers?query=machine+learning"
-        )
+        response = client.get(f"{api_prefix}/graph/link/papers?query=machine+learning")
         assert response.status_code == 200
 
-    def test_semantic_scholar_search_with_limit(self, client: TestClient, api_prefix: str):
+    def test_semantic_scholar_search_with_limit(
+        self, client: TestClient, api_prefix: str
+    ):
         """Test Semantic Scholar search with limit."""
-        response = client.get(
-            f"{api_prefix}/graph/link/papers?query=quantum&limit=5"
-        )
+        response = client.get(f"{api_prefix}/graph/link/papers?query=quantum&limit=5")
         assert response.status_code in [200, 422]
 
     def test_semantic_scholar_invalid_limit(self, client: TestClient, api_prefix: str):
         """Test Semantic Scholar search with invalid limit."""
-        response = client.get(
-            f"{api_prefix}/graph/link/papers?query=test&limit=-1"
-        )
+        response = client.get(f"{api_prefix}/graph/link/papers?query=test&limit=-1")
         assert response.status_code in [200, 400, 422]
 
 

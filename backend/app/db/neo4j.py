@@ -8,6 +8,7 @@ from typing import Any
 try:
     from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
     from neo4j.exceptions import ServiceUnavailable, AuthError
+
     NEO4J_AVAILABLE = True
 except ImportError:
     AsyncGraphDatabase = None  # type: ignore
@@ -215,10 +216,12 @@ async def create_relationship(
     CREATE (a)-[r:{rel_type} $props]->(b)
     RETURN r, elementId(r) as id
     """
-    result = await session.run(query, source_id=source_id, target_id=target_id, props=props)
+    result = await session.run(
+        query, source_id=source_id, target_id=target_id, props=props
+    )
     record = await result.single()
     if record is None:
-        raise ValueError(f"Could not create relationship: nodes not found")
+        raise ValueError("Could not create relationship: nodes not found")
     return {"id": record["id"], "properties": dict(record["r"])}
 
 
@@ -329,7 +332,9 @@ async def traverse_graph(
         return []
 
     rel_filter = "|".join(relationship_types) if relationship_types else ""
-    rel_pattern = f"[r:{rel_filter}*1..{max_depth}]" if rel_filter else f"[r*1..{max_depth}]"
+    rel_pattern = (
+        f"[r:{rel_filter}*1..{max_depth}]" if rel_filter else f"[r*1..{max_depth}]"
+    )
 
     if direction == "OUTGOING":
         pattern = f"-{rel_pattern}->"

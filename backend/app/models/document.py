@@ -71,9 +71,13 @@ class Document(DocumentBase, TimestampMixin):
     """Full document model with all fields."""
 
     doc_id: str = Field(..., description="Unique document ID (SHA-256 hash)")
-    status: DocumentStatus = Field(DocumentStatus.PENDING, description="Processing status")
+    status: DocumentStatus = Field(
+        DocumentStatus.PENDING, description="Processing status"
+    )
     vector_id: str | None = Field(None, description="Vector store ID for embeddings")
-    graph_nodes: list[str] = Field(default_factory=list, description="Associated graph node IDs")
+    graph_nodes: list[str] = Field(
+        default_factory=list, description="Associated graph node IDs"
+    )
     file_path: str | None = Field(None, description="Storage path for original file")
     file_size_bytes: int | None = Field(None, description="File size in bytes")
     page_count: int | None = Field(None, description="Number of pages")

@@ -24,29 +24,32 @@ logger = logging.getLogger(__name__)
 
 class DependencyParsingError(Exception):
     """Exception raised for dependency parsing errors."""
+
     pass
 
 
 class DependencyRelation(Enum):
     """Syntactic dependency relations that map to semantic relations."""
-    NSUBJ = "nsubj"          # nominal subject
+
+    NSUBJ = "nsubj"  # nominal subject
     NSUBJPASS = "nsubjpass"  # passive nominal subject
-    DOBJ = "dobj"            # direct object
-    POBJ = "pobj"            # prepositional object
-    COMPOUND = "compound"    # compound modifier
-    APPOS = "appos"          # appositional modifier
-    AMOD = "amod"            # adjectival modifier
-    PREP = "prep"            # prepositional modifier
-    AGENT = "agent"          # agent (passive voice)
-    ATTR = "attr"            # attribute
-    CONJ = "conj"            # conjunction
-    ACL = "acl"              # clausal modifier
-    RELCL = "relcl"          # relative clause modifier
+    DOBJ = "dobj"  # direct object
+    POBJ = "pobj"  # prepositional object
+    COMPOUND = "compound"  # compound modifier
+    APPOS = "appos"  # appositional modifier
+    AMOD = "amod"  # adjectival modifier
+    PREP = "prep"  # prepositional modifier
+    AGENT = "agent"  # agent (passive voice)
+    ATTR = "attr"  # attribute
+    CONJ = "conj"  # conjunction
+    ACL = "acl"  # clausal modifier
+    RELCL = "relcl"  # relative clause modifier
 
 
 @dataclass
 class DependencyEdge:
     """Represents a dependency edge between tokens."""
+
     head: str
     dependent: str
     relation: str
@@ -57,6 +60,7 @@ class DependencyEdge:
 @dataclass
 class ParsedSentence:
     """Parsed sentence with tokens and dependencies."""
+
     text: str
     tokens: List[str]
     pos_tags: List[str]
@@ -67,6 +71,7 @@ class ParsedSentence:
 @dataclass
 class ExtractedRelation:
     """Relation extracted from dependency parse."""
+
     subject: str
     predicate: str
     object: str
@@ -89,7 +94,6 @@ VERB_RELATION_MAP = {
     "designed": "CREATES",
     "implement": "IMPLEMENTS",
     "implemented": "IMPLEMENTS",
-
     # Introduction/Proposal
     "introduce": "INTRODUCES",
     "introduced": "INTRODUCES",
@@ -99,7 +103,6 @@ VERB_RELATION_MAP = {
     "presented": "PRESENTS",
     "publish": "PUBLISHES",
     "published": "PUBLISHES",
-
     # Usage/Application
     "use": "USES",
     "used": "USES",
@@ -112,7 +115,6 @@ VERB_RELATION_MAP = {
     "applied": "APPLIES",
     "leverage": "USES",
     "leveraged": "USES",
-
     # Training/Evaluation
     "train": "TRAINED_ON",
     "trained": "TRAINED_ON",
@@ -124,7 +126,6 @@ VERB_RELATION_MAP = {
     "benchmarked": "EVALUATED_ON",
     "fine-tune": "FINE_TUNED_ON",
     "fine-tuned": "FINE_TUNED_ON",
-
     # Comparison
     "outperform": "OUTPERFORMS",
     "outperformed": "OUTPERFORMS",
@@ -134,7 +135,6 @@ VERB_RELATION_MAP = {
     "surpassed": "OUTPERFORMS",
     "rival": "COMPETES_WITH",
     "rivals": "COMPETES_WITH",
-
     # Extension/Modification
     "extend": "EXTENDS",
     "extended": "EXTENDS",
@@ -144,7 +144,6 @@ VERB_RELATION_MAP = {
     "improved": "IMPROVES",
     "enhance": "ENHANCES",
     "enhanced": "ENHANCES",
-
     # Composition
     "contain": "CONTAINS",
     "contains": "CONTAINS",
@@ -187,6 +186,7 @@ class DependencyParser:
         if use_spacy:
             try:
                 import spacy
+
                 self.nlp = spacy.load("en_core_web_sm")
                 self._log("Using spaCy for parsing", "success")
             except ImportError as e:
@@ -245,22 +245,26 @@ class DependencyParser:
                         dependent=token.text,
                         relation=token.dep_,
                         head_idx=token.head.i - sent.start,
-                        dep_idx=token.i - sent.start
+                        dep_idx=token.i - sent.start,
                     )
                     dependencies.append(edge)
 
             # Extract entities
             entities_found = []
             for ent in sent.ents:
-                entities_found.append((ent.text, ent.start - sent.start, ent.end - sent.start))
+                entities_found.append(
+                    (ent.text, ent.start - sent.start, ent.end - sent.start)
+                )
 
-            parsed_sentences.append(ParsedSentence(
-                text=sent.text,
-                tokens=tokens,
-                pos_tags=pos_tags,
-                dependencies=dependencies,
-                entities_found=entities_found
-            ))
+            parsed_sentences.append(
+                ParsedSentence(
+                    text=sent.text,
+                    tokens=tokens,
+                    pos_tags=pos_tags,
+                    dependencies=dependencies,
+                    entities_found=entities_found,
+                )
+            )
 
         return parsed_sentences
 
@@ -269,26 +273,26 @@ class DependencyParser:
         # Protect abbreviations
         protected = text
         abbrevs = [
-            (r'\bet al\.', 'ET_AL_PROT'),
-            (r'\bMr\.', 'MR_PROT'),
-            (r'\bDr\.', 'DR_PROT'),
-            (r'\bvs\.', 'VS_PROT'),
-            (r'\bFig\.', 'FIG_PROT'),
-            (r'\bEq\.', 'EQ_PROT'),
-            (r'\bi\.e\.', 'IE_PROT'),
-            (r'\be\.g\.', 'EG_PROT'),
+            (r"\bet al\.", "ET_AL_PROT"),
+            (r"\bMr\.", "MR_PROT"),
+            (r"\bDr\.", "DR_PROT"),
+            (r"\bvs\.", "VS_PROT"),
+            (r"\bFig\.", "FIG_PROT"),
+            (r"\bEq\.", "EQ_PROT"),
+            (r"\bi\.e\.", "IE_PROT"),
+            (r"\be\.g\.", "EG_PROT"),
         ]
         for pattern, replacement in abbrevs:
             protected = re.sub(pattern, replacement, protected)
 
         # Split into sentences
-        sentences = re.split(r'(?<=[.!?])\s+', protected)
+        sentences = re.split(r"(?<=[.!?])\s+", protected)
 
         # Restore abbreviations
         restored_sentences = []
         for sent in sentences:
             for pattern, replacement in abbrevs:
-                original = pattern.replace(r'\b', '').replace('\\', '')
+                original = pattern.replace(r"\b", "").replace("\\", "")
                 sent = sent.replace(replacement, original)
             restored_sentences.append(sent)
 
@@ -302,7 +306,7 @@ class DependencyParser:
     def _pattern_parse_sentence(self, sentence: str) -> ParsedSentence:
         """Parse a single sentence using patterns."""
         # Simple tokenization
-        tokens = re.findall(r'\b[\w\-]+\b|[.,;:!?]', sentence)
+        tokens = re.findall(r"\b[\w\-]+\b|[.,;:!?]", sentence)
 
         # Simple POS tagging based on patterns
         pos_tags = self._simple_pos_tag(tokens)
@@ -315,7 +319,7 @@ class DependencyParser:
             tokens=tokens,
             pos_tags=pos_tags,
             dependencies=dependencies,
-            entities_found=[]
+            entities_found=[],
         )
 
     def _simple_pos_tag(self, tokens: List[str]) -> List[str]:
@@ -326,52 +330,65 @@ class DependencyParser:
             token_lower = token.lower()
 
             # Punctuation
-            if token in '.,;:!?':
-                pos_tags.append('PUNCT')
+            if token in ".,;:!?":
+                pos_tags.append("PUNCT")
             # Verbs (based on common patterns)
             elif token_lower in VERB_RELATION_MAP:
-                pos_tags.append('VERB')
+                pos_tags.append("VERB")
             # Determiners
-            elif token_lower in {'the', 'a', 'an', 'this', 'that', 'these', 'those'}:
-                pos_tags.append('DET')
+            elif token_lower in {"the", "a", "an", "this", "that", "these", "those"}:
+                pos_tags.append("DET")
             # Prepositions
-            elif token_lower in PREP_RELATION_MAP or token_lower in {'of', 'to'}:
-                pos_tags.append('ADP')
+            elif token_lower in PREP_RELATION_MAP or token_lower in {"of", "to"}:
+                pos_tags.append("ADP")
             # Auxiliaries
-            elif token_lower in {'is', 'are', 'was', 'were', 'be', 'been', 'being', 'has', 'have', 'had'}:
-                pos_tags.append('AUX')
+            elif token_lower in {
+                "is",
+                "are",
+                "was",
+                "were",
+                "be",
+                "been",
+                "being",
+                "has",
+                "have",
+                "had",
+            }:
+                pos_tags.append("AUX")
             # Conjunctions
-            elif token_lower in {'and', 'or', 'but', 'nor', 'yet', 'so'}:
-                pos_tags.append('CCONJ')
+            elif token_lower in {"and", "or", "but", "nor", "yet", "so"}:
+                pos_tags.append("CCONJ")
             # Proper nouns (capitalized, not first word)
             elif token[0].isupper() and i > 0:
-                pos_tags.append('PROPN')
+                pos_tags.append("PROPN")
             # First word capitalized might be noun or proper noun
             elif token[0].isupper() and i == 0:
-                pos_tags.append('NOUN')
+                pos_tags.append("NOUN")
             # Words ending in -ly are often adverbs
-            elif token_lower.endswith('ly'):
-                pos_tags.append('ADV')
+            elif token_lower.endswith("ly"):
+                pos_tags.append("ADV")
             # Words ending in -ing might be verbs
-            elif token_lower.endswith('ing'):
-                pos_tags.append('VERB')
+            elif token_lower.endswith("ing"):
+                pos_tags.append("VERB")
             # Words ending in -ed might be verbs
-            elif token_lower.endswith('ed'):
-                pos_tags.append('VERB')
+            elif token_lower.endswith("ed"):
+                pos_tags.append("VERB")
             # Default to noun
             else:
-                pos_tags.append('NOUN')
+                pos_tags.append("NOUN")
 
         return pos_tags
 
-    def _generate_pattern_dependencies(self, tokens: List[str], pos_tags: List[str]) -> List[DependencyEdge]:
+    def _generate_pattern_dependencies(
+        self, tokens: List[str], pos_tags: List[str]
+    ) -> List[DependencyEdge]:
         """Generate synthetic dependencies based on sentence patterns."""
         dependencies = []
 
         # Find main verb
         verb_idx = None
         for i, pos in enumerate(pos_tags):
-            if pos == 'VERB':
+            if pos == "VERB":
                 verb_idx = i
                 break
 
@@ -382,48 +399,58 @@ class DependencyParser:
 
         # Subject: noun/proper noun before verb
         for i in range(verb_idx - 1, -1, -1):
-            if pos_tags[i] in ('NOUN', 'PROPN'):
-                dependencies.append(DependencyEdge(
-                    head=verb,
-                    dependent=tokens[i],
-                    relation='nsubj',
-                    head_idx=verb_idx,
-                    dep_idx=i
-                ))
+            if pos_tags[i] in ("NOUN", "PROPN"):
+                dependencies.append(
+                    DependencyEdge(
+                        head=verb,
+                        dependent=tokens[i],
+                        relation="nsubj",
+                        head_idx=verb_idx,
+                        dep_idx=i,
+                    )
+                )
                 break
 
         # Object: noun/proper noun after verb
         for i in range(verb_idx + 1, len(tokens)):
-            if pos_tags[i] in ('NOUN', 'PROPN'):
+            if pos_tags[i] in ("NOUN", "PROPN"):
                 # Check if preceded by preposition
-                if i > 0 and pos_tags[i-1] == 'ADP':
-                    dependencies.append(DependencyEdge(
-                        head=tokens[i-1],  # preposition is head
-                        dependent=tokens[i],
-                        relation='pobj',
-                        head_idx=i-1,
-                        dep_idx=i
-                    ))
-                    dependencies.append(DependencyEdge(
-                        head=verb,
-                        dependent=tokens[i-1],
-                        relation='prep',
-                        head_idx=verb_idx,
-                        dep_idx=i-1
-                    ))
+                if i > 0 and pos_tags[i - 1] == "ADP":
+                    dependencies.append(
+                        DependencyEdge(
+                            head=tokens[i - 1],  # preposition is head
+                            dependent=tokens[i],
+                            relation="pobj",
+                            head_idx=i - 1,
+                            dep_idx=i,
+                        )
+                    )
+                    dependencies.append(
+                        DependencyEdge(
+                            head=verb,
+                            dependent=tokens[i - 1],
+                            relation="prep",
+                            head_idx=verb_idx,
+                            dep_idx=i - 1,
+                        )
+                    )
                 else:
-                    dependencies.append(DependencyEdge(
-                        head=verb,
-                        dependent=tokens[i],
-                        relation='dobj',
-                        head_idx=verb_idx,
-                        dep_idx=i
-                    ))
+                    dependencies.append(
+                        DependencyEdge(
+                            head=verb,
+                            dependent=tokens[i],
+                            relation="dobj",
+                            head_idx=verb_idx,
+                            dep_idx=i,
+                        )
+                    )
                 break
 
         return dependencies
 
-    def extract_relations(self, text: str, entities: List[Dict]) -> List[ExtractedRelation]:
+    def extract_relations(
+        self, text: str, entities: List[Dict]
+    ) -> List[ExtractedRelation]:
         """
         Extract relations between entities using dependency parsing.
 
@@ -451,7 +478,7 @@ class DependencyParser:
 
             # Build entity lookup
             try:
-                entity_texts = {e['text'].lower(): e for e in entities}
+                entity_texts = {e["text"].lower(): e for e in entities}
                 entity_set = set(entity_texts.keys())
                 self._log(f"Processing {len(entities)} entities")
             except (KeyError, TypeError) as e:
@@ -482,9 +509,15 @@ class DependencyParser:
 
             # Report completion
             if errors > 0:
-                self._log(f"Completed with {errors} errors: {len(relations)} relations extracted", "warning")
+                self._log(
+                    f"Completed with {errors} errors: {len(relations)} relations extracted",
+                    "warning",
+                )
             else:
-                self._log(f"Completed successfully: {len(relations)} relations extracted", "success")
+                self._log(
+                    f"Completed successfully: {len(relations)} relations extracted",
+                    "success",
+                )
 
             return relations
 
@@ -498,7 +531,7 @@ class DependencyParser:
         self,
         sentence: ParsedSentence,
         entity_texts: Dict[str, Dict],
-        entity_set: Set[str]
+        entity_set: Set[str],
     ) -> List[ExtractedRelation]:
         """Extract relations from a parsed sentence."""
         relations = []
@@ -515,14 +548,14 @@ class DependencyParser:
 
         # Look for verb-mediated relations
         for dep in sentence.dependencies:
-            if dep.relation == 'nsubj':
+            if dep.relation == "nsubj":
                 # Found subject-verb relation
                 subject = dep.dependent
                 verb = dep.head
 
                 # Find object
                 for dep2 in sentence.dependencies:
-                    if dep2.head == verb and dep2.relation in ('dobj', 'attr'):
+                    if dep2.head == verb and dep2.relation in ("dobj", "attr"):
                         obj = dep2.dependent
 
                         # Check if subject and object are entities
@@ -530,53 +563,65 @@ class DependencyParser:
                         obj_match = self._match_entity(obj, entities_in_sent)
 
                         if subj_match and obj_match:
-                            rel_type = VERB_RELATION_MAP.get(verb.lower(), 'RELATED_TO')
-                            relations.append(ExtractedRelation(
-                                subject=entity_texts[subj_match]['text'],
-                                predicate=verb,
-                                object=entity_texts[obj_match]['text'],
-                                relation_type=rel_type,
-                                confidence=0.8,
-                                evidence=sentence.text,
-                                dependency_path=[dep.relation, dep2.relation]
-                            ))
+                            rel_type = VERB_RELATION_MAP.get(verb.lower(), "RELATED_TO")
+                            relations.append(
+                                ExtractedRelation(
+                                    subject=entity_texts[subj_match]["text"],
+                                    predicate=verb,
+                                    object=entity_texts[obj_match]["text"],
+                                    relation_type=rel_type,
+                                    confidence=0.8,
+                                    evidence=sentence.text,
+                                    dependency_path=[dep.relation, dep2.relation],
+                                )
+                            )
 
-            elif dep.relation == 'pobj':
+            elif dep.relation == "pobj":
                 # Prepositional object - look for prep relation
                 prep = None
                 for dep2 in sentence.dependencies:
-                    if dep2.dependent == dep.head and dep2.relation == 'prep':
+                    if dep2.dependent == dep.head and dep2.relation == "prep":
                         prep = dep.head
                         verb = dep2.head
                         obj = dep.dependent
 
                         # Find subject of verb
                         for dep3 in sentence.dependencies:
-                            if dep3.head == verb and dep3.relation == 'nsubj':
+                            if dep3.head == verb and dep3.relation == "nsubj":
                                 subject = dep3.dependent
 
-                                subj_match = self._match_entity(subject, entities_in_sent)
+                                subj_match = self._match_entity(
+                                    subject, entities_in_sent
+                                )
                                 obj_match = self._match_entity(obj, entities_in_sent)
 
                                 if subj_match and obj_match:
                                     # Combine verb and prep for relation type
                                     verb_rel = VERB_RELATION_MAP.get(verb.lower())
                                     prep_rel = PREP_RELATION_MAP.get(prep.lower())
-                                    rel_type = verb_rel or prep_rel or 'RELATED_TO'
+                                    rel_type = verb_rel or prep_rel or "RELATED_TO"
 
-                                    relations.append(ExtractedRelation(
-                                        subject=entity_texts[subj_match]['text'],
-                                        predicate=f"{verb} {prep}",
-                                        object=entity_texts[obj_match]['text'],
-                                        relation_type=rel_type,
-                                        confidence=0.75,
-                                        evidence=sentence.text,
-                                        dependency_path=[dep3.relation, dep2.relation, dep.relation]
-                                    ))
+                                    relations.append(
+                                        ExtractedRelation(
+                                            subject=entity_texts[subj_match]["text"],
+                                            predicate=f"{verb} {prep}",
+                                            object=entity_texts[obj_match]["text"],
+                                            relation_type=rel_type,
+                                            confidence=0.75,
+                                            evidence=sentence.text,
+                                            dependency_path=[
+                                                dep3.relation,
+                                                dep2.relation,
+                                                dep.relation,
+                                            ],
+                                        )
+                                    )
                         break
 
         # Pattern-based extraction for common constructs
-        pattern_relations = self._extract_pattern_relations(sentence.text, entities_in_sent, entity_texts)
+        pattern_relations = self._extract_pattern_relations(
+            sentence.text, entities_in_sent, entity_texts
+        )
         relations.extend(pattern_relations)
 
         return relations
@@ -597,10 +642,7 @@ class DependencyParser:
         return None
 
     def _extract_pattern_relations(
-        self,
-        sentence: str,
-        entities_in_sent: List[str],
-        entity_texts: Dict[str, Dict]
+        self, sentence: str, entities_in_sent: List[str], entity_texts: Dict[str, Dict]
     ) -> List[ExtractedRelation]:
         """Extract relations using regex patterns."""
         relations = []
@@ -608,15 +650,15 @@ class DependencyParser:
 
         # Pattern: X introduced Y
         for pattern, rel_type in [
-            (r'(\w+(?:\s+et\s+al\.)?)\s+introduced\s+(\w+)', 'INTRODUCES'),
-            (r'(\w+(?:\s+et\s+al\.)?)\s+developed\s+(\w+)', 'DEVELOPS'),
-            (r'(\w+(?:\s+et\s+al\.)?)\s+created\s+(\w+)', 'CREATES'),
-            (r'(\w+)\s+uses?\s+(\w+)', 'USES'),
-            (r'(\w+)\s+trained\s+on\s+(\w+)', 'TRAINED_ON'),
-            (r'(\w+)\s+evaluated\s+on\s+(\w+)', 'EVALUATED_ON'),
-            (r'(\w+)\s+at\s+(\w+)', 'AFFILIATED_WITH'),
-            (r'(\w+)\s+outperforms?\s+(\w+)', 'OUTPERFORMS'),
-            (r'(\w+)\s+rivals?\s+(\w+)', 'COMPETES_WITH'),
+            (r"(\w+(?:\s+et\s+al\.)?)\s+introduced\s+(\w+)", "INTRODUCES"),
+            (r"(\w+(?:\s+et\s+al\.)?)\s+developed\s+(\w+)", "DEVELOPS"),
+            (r"(\w+(?:\s+et\s+al\.)?)\s+created\s+(\w+)", "CREATES"),
+            (r"(\w+)\s+uses?\s+(\w+)", "USES"),
+            (r"(\w+)\s+trained\s+on\s+(\w+)", "TRAINED_ON"),
+            (r"(\w+)\s+evaluated\s+on\s+(\w+)", "EVALUATED_ON"),
+            (r"(\w+)\s+at\s+(\w+)", "AFFILIATED_WITH"),
+            (r"(\w+)\s+outperforms?\s+(\w+)", "OUTPERFORMS"),
+            (r"(\w+)\s+rivals?\s+(\w+)", "COMPETES_WITH"),
         ]:
             matches = re.finditer(pattern, sent_lower)
             for match in matches:
@@ -634,15 +676,19 @@ class DependencyParser:
                         obj_match = ent
 
                 if subj_match and obj_match and subj_match != obj_match:
-                    relations.append(ExtractedRelation(
-                        subject=entity_texts[subj_match]['text'],
-                        predicate=pattern.split(r'\s+')[1].replace('\\', '').replace('s?', ''),
-                        object=entity_texts[obj_match]['text'],
-                        relation_type=rel_type,
-                        confidence=0.7,
-                        evidence=sentence,
-                        dependency_path=['pattern_match']
-                    ))
+                    relations.append(
+                        ExtractedRelation(
+                            subject=entity_texts[subj_match]["text"],
+                            predicate=pattern.split(r"\s+")[1]
+                            .replace("\\", "")
+                            .replace("s?", ""),
+                            object=entity_texts[obj_match]["text"],
+                            relation_type=rel_type,
+                            confidence=0.7,
+                            evidence=sentence,
+                            dependency_path=["pattern_match"],
+                        )
+                    )
 
         return relations
 

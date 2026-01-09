@@ -3,14 +3,15 @@ Integration tests for Scholar Mode.
 Tests citations, credibility scoring, Zotero export, reflection, and annotations.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 
 
 class TestCitationTree:
     """Test citation tree functionality."""
 
-    def test_build_citation_tree_requires_auth(self, client: TestClient, api_prefix: str):
+    def test_build_citation_tree_requires_auth(
+        self, client: TestClient, api_prefix: str
+    ):
         """Test that building citation tree requires authentication."""
         request_data = {
             "doi": "10.1234/test.2024.001",
@@ -18,7 +19,9 @@ class TestCitationTree:
             "refs_per_level": 10,
             "cites_per_level": 10,
         }
-        response = client.post(f"{api_prefix}/scholar/citations/tree", json=request_data)
+        response = client.post(
+            f"{api_prefix}/scholar/citations/tree", json=request_data
+        )
         assert response.status_code == 401
 
     def test_build_citation_tree_with_auth(
@@ -95,7 +98,9 @@ class TestCredibilityScoring:
     def test_score_credibility_requires_auth(self, client: TestClient, api_prefix: str):
         """Test that credibility scoring requires authentication."""
         request_data = {"doi": "10.1234/test.2024.001"}
-        response = client.post(f"{api_prefix}/scholar/credibility/score", json=request_data)
+        response = client.post(
+            f"{api_prefix}/scholar/credibility/score", json=request_data
+        )
         assert response.status_code == 401
 
     def test_score_credibility_with_auth(
@@ -118,9 +123,7 @@ class TestCredibilityScoring:
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
         """Test comparing credibility of multiple papers."""
-        request_data = {
-            "dois": ["10.1234/paper1", "10.1234/paper2", "10.1234/paper3"]
-        }
+        request_data = {"dois": ["10.1234/paper1", "10.1234/paper2", "10.1234/paper3"]}
         response = client.post(
             f"{api_prefix}/scholar/credibility/compare",
             json=request_data,
@@ -231,11 +234,17 @@ class TestReflectionEngine:
             "reflection_type": "initial_reading",
             "complexity_level": 50,
         }
-        response = client.post(f"{api_prefix}/scholar/reflection/snapshot", json=request_data)
+        response = client.post(
+            f"{api_prefix}/scholar/reflection/snapshot", json=request_data
+        )
         assert response.status_code == 401
 
     def test_create_snapshot_with_auth(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test creating a reading snapshot with authentication."""
         request_data = {
@@ -255,7 +264,11 @@ class TestReflectionEngine:
         assert response.status_code in [200, 201, 401]
 
     def test_get_snapshots(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting reading snapshots for a document."""
         response = client.get(
@@ -265,7 +278,11 @@ class TestReflectionEngine:
         assert response.status_code in [200, 401]
 
     def test_get_learning_journey(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting learning journey for a document."""
         response = client.get(
@@ -275,7 +292,11 @@ class TestReflectionEngine:
         assert response.status_code in [200, 401]
 
     def test_get_reflection_prompts(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting reflection prompts."""
         response = client.get(
@@ -292,7 +313,9 @@ class TestCollaborativeAnnotations:
         self, client: TestClient, api_prefix: str, sample_annotation: dict
     ):
         """Test that creating annotation requires authentication."""
-        response = client.post(f"{api_prefix}/scholar/annotations", json=sample_annotation)
+        response = client.post(
+            f"{api_prefix}/scholar/annotations", json=sample_annotation
+        )
         assert response.status_code == 401
 
     def test_create_annotation_with_auth(
@@ -318,7 +341,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 201, 401]
 
     def test_get_annotations(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting annotations for a document."""
         response = client.get(
@@ -328,7 +355,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401]
 
     def test_get_annotations_filtered(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting annotations with filters."""
         response = client.get(
@@ -338,7 +369,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401]
 
     def test_update_annotation(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test updating an annotation."""
         update_data = {"content": "Updated content", "tags": ["updated"]}
@@ -350,7 +385,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401, 404]
 
     def test_delete_annotation(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test deleting an annotation."""
         response = client.delete(
@@ -360,7 +399,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401, 404]
 
     def test_add_reaction(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test adding a reaction to an annotation."""
         reaction_data = {"emoji": "thumbs_up"}
@@ -372,7 +415,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401, 404]
 
     def test_get_annotation_thread(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting annotation thread/replies."""
         response = client.get(
@@ -382,7 +429,11 @@ class TestCollaborativeAnnotations:
         assert response.status_code in [200, 401, 404]
 
     def test_get_annotation_stats(
-        self, client: TestClient, api_prefix: str, auth_headers: dict, mock_document_id: str
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        mock_document_id: str,
     ):
         """Test getting annotation statistics."""
         response = client.get(

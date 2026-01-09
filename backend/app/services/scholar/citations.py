@@ -16,6 +16,7 @@ from app.config import settings
 
 class CitationType(str, Enum):
     """Types of citation relationships."""
+
     CITES = "cites"  # This paper cites the target
     CITED_BY = "cited_by"  # This paper is cited by target
     RELATED = "related"  # Papers share common citations
@@ -24,6 +25,7 @@ class CitationType(str, Enum):
 @dataclass
 class CitationNode:
     """Represents a paper in the citation tree."""
+
     paper_id: str  # DOI or other identifier
     title: str
     authors: list[str]
@@ -39,6 +41,7 @@ class CitationNode:
 @dataclass
 class CitationEdge:
     """Represents a citation relationship."""
+
     source_id: str
     target_id: str
     citation_type: CitationType
@@ -48,6 +51,7 @@ class CitationEdge:
 @dataclass
 class CitationTree:
     """Hierarchical citation network."""
+
     root: CitationNode
     nodes: dict[str, CitationNode] = field(default_factory=dict)
     edges: list[CitationEdge] = field(default_factory=list)
@@ -65,7 +69,8 @@ class CitationTree:
     def get_references(self, paper_id: str) -> list[CitationNode]:
         """Get papers cited by the given paper."""
         ref_ids = [
-            e.target_id for e in self.edges
+            e.target_id
+            for e in self.edges
             if e.source_id == paper_id and e.citation_type == CitationType.CITES
         ]
         return [self.nodes[rid] for rid in ref_ids if rid in self.nodes]
@@ -73,7 +78,8 @@ class CitationTree:
     def get_citations(self, paper_id: str) -> list[CitationNode]:
         """Get papers that cite the given paper."""
         cit_ids = [
-            e.source_id for e in self.edges
+            e.source_id
+            for e in self.edges
             if e.target_id == paper_id and e.citation_type == CitationType.CITES
         ]
         return [self.nodes[cid] for cid in cit_ids if cid in self.nodes]
@@ -225,15 +231,19 @@ class CitationService:
 
                 ext_ids = cited_paper.get("externalIds", {})
 
-                references.append(CitationNode(
-                    paper_id=cited_paper.get("paperId"),
-                    title=cited_paper.get("title", "Unknown"),
-                    authors=[a.get("name", "") for a in cited_paper.get("authors", [])],
-                    year=cited_paper.get("year"),
-                    venue=cited_paper.get("venue"),
-                    citation_count=cited_paper.get("citationCount", 0),
-                    doi=ext_ids.get("DOI"),
-                ))
+                references.append(
+                    CitationNode(
+                        paper_id=cited_paper.get("paperId"),
+                        title=cited_paper.get("title", "Unknown"),
+                        authors=[
+                            a.get("name", "") for a in cited_paper.get("authors", [])
+                        ],
+                        year=cited_paper.get("year"),
+                        venue=cited_paper.get("venue"),
+                        citation_count=cited_paper.get("citationCount", 0),
+                        doi=ext_ids.get("DOI"),
+                    )
+                )
 
             return references
 
@@ -280,15 +290,19 @@ class CitationService:
 
                 ext_ids = citing_paper.get("externalIds", {})
 
-                citations.append(CitationNode(
-                    paper_id=citing_paper.get("paperId"),
-                    title=citing_paper.get("title", "Unknown"),
-                    authors=[a.get("name", "") for a in citing_paper.get("authors", [])],
-                    year=citing_paper.get("year"),
-                    venue=citing_paper.get("venue"),
-                    citation_count=citing_paper.get("citationCount", 0),
-                    doi=ext_ids.get("DOI"),
-                ))
+                citations.append(
+                    CitationNode(
+                        paper_id=citing_paper.get("paperId"),
+                        title=citing_paper.get("title", "Unknown"),
+                        authors=[
+                            a.get("name", "") for a in citing_paper.get("authors", [])
+                        ],
+                        year=citing_paper.get("year"),
+                        venue=citing_paper.get("venue"),
+                        citation_count=citing_paper.get("citationCount", 0),
+                        doi=ext_ids.get("DOI"),
+                    )
+                )
 
             return citations
 
@@ -348,11 +362,13 @@ class CitationService:
                     visited.add(ref.paper_id)
                     queue.append((ref.paper_id, depth + 1))
 
-                tree.edges.append(CitationEdge(
-                    source_id=paper_id,
-                    target_id=ref.paper_id,
-                    citation_type=CitationType.CITES,
-                ))
+                tree.edges.append(
+                    CitationEdge(
+                        source_id=paper_id,
+                        target_id=ref.paper_id,
+                        citation_type=CitationType.CITES,
+                    )
+                )
 
             # Process citations (papers that cite this one)
             for cit in cites:
@@ -362,11 +378,13 @@ class CitationService:
                     visited.add(cit.paper_id)
                     queue.append((cit.paper_id, depth + 1))
 
-                tree.edges.append(CitationEdge(
-                    source_id=cit.paper_id,
-                    target_id=paper_id,
-                    citation_type=CitationType.CITES,
-                ))
+                tree.edges.append(
+                    CitationEdge(
+                        source_id=cit.paper_id,
+                        target_id=paper_id,
+                        citation_type=CitationType.CITES,
+                    )
+                )
 
             # Rate limiting
             await asyncio.sleep(0.5)

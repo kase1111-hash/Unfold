@@ -74,12 +74,15 @@ class EntityExtractor:
         if self._nlp is None:
             try:
                 import spacy
+
                 self._nlp = spacy.load(self._model_name)
             except OSError:
                 # Model not installed, try downloading
                 import spacy.cli
+
                 spacy.cli.download(self._model_name)
                 import spacy
+
                 self._nlp = spacy.load(self._model_name)
         return self._nlp
 
@@ -141,7 +144,12 @@ class EntityExtractor:
                     continue
 
                 # Skip very short or generic chunks
-                if len(chunk.text) < 3 or chunk.text.lower() in {"it", "this", "that", "they"}:
+                if len(chunk.text) < 3 or chunk.text.lower() in {
+                    "it",
+                    "this",
+                    "that",
+                    "they",
+                }:
                     continue
 
                 # Check if it's a meaningful concept (has noun as root)
@@ -190,7 +198,11 @@ class EntityExtractor:
         term_freq: dict[str, int] = {}
 
         for token in doc:
-            if token.pos_ in {"NOUN", "PROPN"} and not token.is_stop and len(token.text) > 2:
+            if (
+                token.pos_ in {"NOUN", "PROPN"}
+                and not token.is_stop
+                and len(token.text) > 2
+            ):
                 lemma = token.lemma_.lower()
                 term_freq[lemma] = term_freq.get(lemma, 0) + 1
 
@@ -221,19 +233,23 @@ class EntityExtractor:
             sent_entities = []
 
             for ent in sent.ents:
-                sent_entities.append({
-                    "text": ent.text,
-                    "label": ent.label_,
-                    "start": ent.start_char - sent.start_char,
-                    "end": ent.end_char - sent.start_char,
-                })
+                sent_entities.append(
+                    {
+                        "text": ent.text,
+                        "label": ent.label_,
+                        "start": ent.start_char - sent.start_char,
+                        "end": ent.end_char - sent.start_char,
+                    }
+                )
 
-            results.append({
-                "sentence": sent.text,
-                "entities": sent_entities,
-                "start_char": sent.start_char,
-                "end_char": sent.end_char,
-            })
+            results.append(
+                {
+                    "sentence": sent.text,
+                    "entities": sent_entities,
+                    "start_char": sent.start_char,
+                    "end_char": sent.end_char,
+                }
+            )
 
         return results
 

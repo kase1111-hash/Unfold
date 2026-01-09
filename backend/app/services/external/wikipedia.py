@@ -1,7 +1,6 @@
 """Wikipedia API integration for concept linking."""
 
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 

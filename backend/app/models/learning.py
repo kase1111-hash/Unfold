@@ -30,7 +30,9 @@ class ReviewQuality(int, Enum):
 class FlashcardBase(BaseModel):
     """Base flashcard model."""
 
-    question: str = Field(..., min_length=1, max_length=1000, description="Question text")
+    question: str = Field(
+        ..., min_length=1, max_length=1000, description="Question text"
+    )
     answer: str = Field(..., min_length=1, max_length=2000, description="Answer text")
     source_node_id: str = Field(..., description="Source knowledge graph node")
     difficulty: FlashcardDifficulty = Field(
@@ -110,8 +112,12 @@ class ReflectionSnapshot(TimestampMixin):
     nodes_added: int = Field(0, ge=0, description="Graph nodes added")
     nodes_deleted: int = Field(0, ge=0, description="Graph nodes removed")
     connections_made: int = Field(0, ge=0, description="New connections created")
-    notes: str | None = Field(None, max_length=2000, description="User reflection notes")
-    insights: list[str] = Field(default_factory=list, description="AI-generated insights")
+    notes: str | None = Field(
+        None, max_length=2000, description="User reflection notes"
+    )
+    insights: list[str] = Field(
+        default_factory=list, description="AI-generated insights"
+    )
 
 
 class ExportFormat(str, Enum):

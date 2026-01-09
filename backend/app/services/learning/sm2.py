@@ -15,6 +15,7 @@ class ResponseQuality(IntEnum):
     0-2: Incorrect responses (card needs to be relearned)
     3-5: Correct responses with varying recall difficulty
     """
+
     BLACKOUT = 0  # Complete blackout, no recall
     INCORRECT = 1  # Incorrect, but recognized after seeing answer
     DIFFICULT_INCORRECT = 2  # Incorrect, but seemed easy after seeing answer
@@ -26,6 +27,7 @@ class ResponseQuality(IntEnum):
 @dataclass
 class CardReviewState:
     """State of a flashcard in the spaced repetition system."""
+
     card_id: str
     easiness_factor: float = 2.5  # EF starts at 2.5
     interval: int = 0  # Days until next review
@@ -159,10 +161,7 @@ class SM2Scheduler:
             List of due cards, sorted by overdue time
         """
         now = datetime.utcnow()
-        due_cards = [
-            card for card in self._cards.values()
-            if card.next_review <= now
-        ]
+        due_cards = [card for card in self._cards.values() if card.next_review <= now]
 
         # Sort by how overdue they are (most overdue first)
         due_cards.sort(key=lambda c: c.next_review)
@@ -189,8 +188,7 @@ class SM2Scheduler:
         cutoff = now + timedelta(days=days)
 
         upcoming = [
-            card for card in self._cards.values()
-            if now < card.next_review <= cutoff
+            card for card in self._cards.values() if now < card.next_review <= cutoff
         ]
 
         upcoming.sort(key=lambda c: c.next_review)
@@ -229,7 +227,8 @@ class SM2Scheduler:
         cards_with_reviews = [c for c in self._cards.values() if c.total_reviews > 0]
         avg_retention = (
             sum(c.retention_rate for c in cards_with_reviews) / len(cards_with_reviews)
-            if cards_with_reviews else 0
+            if cards_with_reviews
+            else 0
         )
 
         return {
@@ -290,6 +289,7 @@ class SM2Scheduler:
             return 0.0
 
         import math
+
         retention = math.exp(-days_from_now / stability)
         return round(retention, 3)
 
@@ -301,7 +301,9 @@ class SM2Scheduler:
                 "interval": state.interval,
                 "repetitions": state.repetitions,
                 "next_review": state.next_review.isoformat(),
-                "last_review": state.last_review.isoformat() if state.last_review else None,
+                "last_review": (
+                    state.last_review.isoformat() if state.last_review else None
+                ),
                 "total_reviews": state.total_reviews,
                 "correct_reviews": state.correct_reviews,
             }
@@ -319,7 +321,8 @@ class SM2Scheduler:
                 next_review=datetime.fromisoformat(card_data["next_review"]),
                 last_review=(
                     datetime.fromisoformat(card_data["last_review"])
-                    if card_data["last_review"] else None
+                    if card_data["last_review"]
+                    else None
                 ),
                 total_reviews=card_data["total_reviews"],
                 correct_reviews=card_data["correct_reviews"],

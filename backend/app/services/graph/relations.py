@@ -67,6 +67,7 @@ class RelationExtractor:
                 raise ValueError("OPENAI_API_KEY not configured")
 
             from openai import OpenAI
+
             self._client = OpenAI(api_key=settings.openai_api_key)
 
         return self._client
@@ -91,10 +92,7 @@ class RelationExtractor:
             return []
 
         # Format entities for prompt
-        entity_list = "\n".join(
-            f"- {e.text} ({e.entity_type.value})"
-            for e in entities
-        )
+        entity_list = "\n".join(f"- {e.text} ({e.entity_type.value})" for e in entities)
 
         prompt = RELATION_EXTRACTION_PROMPT.format(
             text=text[:4000],  # Limit text length
@@ -194,7 +192,9 @@ class RelationExtractor:
 
             for item in data:
                 try:
-                    relation_type = self._map_relation_type(item.get("relation_type", ""))
+                    relation_type = self._map_relation_type(
+                        item.get("relation_type", "")
+                    )
                     confidence = float(item.get("confidence", 0.5))
 
                     if confidence < min_confidence:
@@ -253,6 +253,7 @@ class RuleBasedRelationExtractor:
         """Lazy load spaCy."""
         if self._nlp is None:
             import spacy
+
             self._nlp = spacy.load("en_core_web_sm")
         return self._nlp
 
@@ -279,9 +280,7 @@ class RuleBasedRelationExtractor:
 
         # Pattern-based extraction
         for sent in doc.sents:
-            relations.extend(
-                self._extract_from_sentence(sent, entity_texts)
-            )
+            relations.extend(self._extract_from_sentence(sent, entity_texts))
 
         return relations
 
@@ -306,11 +305,13 @@ class RuleBasedRelationExtractor:
             if token.pos_ == "VERB":
                 # Look for subject and object
                 subjects = [
-                    child for child in token.children
+                    child
+                    for child in token.children
                     if child.dep_ in {"nsubj", "nsubjpass"}
                 ]
                 objects = [
-                    child for child in token.children
+                    child
+                    for child in token.children
                     if child.dep_ in {"dobj", "pobj", "attr"}
                 ]
 
@@ -427,16 +428,25 @@ def get_relation_extractor(
     if use_integrated:
         if _integrated_extractor is None:
             try:
-                from app.services.graph.integrated_pipeline import IntegratedRelationExtractor
+                from app.services.graph.integrated_pipeline import (
+                    IntegratedRelationExtractor,
+                )
+
                 _integrated_extractor = IntegratedRelationExtractor(
                     use_coreference=True,
                     use_dependency=True,
                     use_llm=use_llm,
                     use_patterns=True,
                     llm_provider=llm_provider,
-                    openai_key=settings.openai_api_key if hasattr(settings, 'openai_api_key') else None,
+                    openai_key=(
+                        settings.openai_api_key
+                        if hasattr(settings, "openai_api_key")
+                        else None
+                    ),
                 )
-                logger.info(f"Using integrated pipeline with LLM provider: {llm_provider}")
+                logger.info(
+                    f"Using integrated pipeline with LLM provider: {llm_provider}"
+                )
             except ImportError as e:
                 logger.warning(f"Integrated pipeline unavailable: {e}")
                 # Fall back to standard extractors

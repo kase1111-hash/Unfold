@@ -91,7 +91,9 @@ class TestEntityExtractor:
 
     def test_extract_sentences_with_entities(self, extractor):
         """Test sentence-level entity extraction."""
-        text = "Albert Einstein was born in Germany. He later moved to the United States."
+        text = (
+            "Albert Einstein was born in Germany. He later moved to the United States."
+        )
 
         results = extractor.extract_sentences_with_entities(text)
 

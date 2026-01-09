@@ -2,9 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from typing import Generator
 import uuid
-from datetime import datetime
 
 from app.main import app
 

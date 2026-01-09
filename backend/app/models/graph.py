@@ -39,7 +39,9 @@ class GraphNodeBase(BaseModel):
 
     label: str = Field(..., min_length=1, max_length=500, description="Node label/name")
     type: NodeType = Field(..., description="Node type")
-    description: str | None = Field(None, max_length=2000, description="Node description")
+    description: str | None = Field(
+        None, max_length=2000, description="Node description"
+    )
     metadata: dict | None = Field(None, description="Additional metadata")
 
 

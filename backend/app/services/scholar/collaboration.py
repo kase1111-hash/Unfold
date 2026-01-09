@@ -8,11 +8,11 @@ from datetime import datetime
 from typing import Optional
 from enum import Enum
 import uuid
-import json
 
 
 class AnnotationType(str, Enum):
     """Types of annotations."""
+
     HIGHLIGHT = "highlight"
     COMMENT = "comment"
     QUESTION = "question"
@@ -23,6 +23,7 @@ class AnnotationType(str, Enum):
 
 class AnnotationVisibility(str, Enum):
     """Visibility levels for annotations."""
+
     PRIVATE = "private"  # Only creator can see
     GROUP = "group"  # Shared with specific group
     PUBLIC = "public"  # Visible to all document readers
@@ -31,6 +32,7 @@ class AnnotationVisibility(str, Enum):
 @dataclass
 class Annotation:
     """Represents a single annotation."""
+
     annotation_id: str
     document_id: str
     user_id: str
@@ -85,6 +87,7 @@ class Annotation:
 @dataclass
 class CRDTOperation:
     """Represents a CRDT operation for synchronization."""
+
     operation_id: str
     timestamp: datetime
     user_id: str
