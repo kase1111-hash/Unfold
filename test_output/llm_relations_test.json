@@ -1,0 +1,93 @@
+{
+  "timestamp": "2026-01-09T00:17:43.190241",
+  "mode": "SIMULATED",
+  "results": {
+    "total_relations": 39,
+    "expected_found": 11,
+    "total_expected": 13,
+    "recall": 0.846,
+    "type_distribution": {
+      "INTRODUCES": 5,
+      "DEVELOPS": 6,
+      "AFFILIATED_WITH": 2,
+      "RELATED_TO": 12,
+      "CONTRASTS_WITH": 3,
+      "USES": 4,
+      "EVALUATED_ON": 6,
+      "TRAINED_ON": 1
+    },
+    "found_list": [
+      {
+        "source": "Vaswani et al.",
+        "target": "Transformer",
+        "found": "INTRODUCES"
+      },
+      {
+        "source": "Devlin et al.",
+        "target": "BERT",
+        "found": "INTRODUCES"
+      },
+      {
+        "source": "Dosovitskiy et al.",
+        "target": "Vision Transformer",
+        "found": "INTRODUCES"
+      },
+      {
+        "source": "OpenAI",
+        "target": "GPT",
+        "found": "DEVELOPS"
+      },
+      {
+        "source": "Transformer",
+        "target": "self-attention",
+        "found": "USES"
+      },
+      {
+        "source": "Transformer",
+        "target": "RNNs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "Transformer",
+        "target": "LSTMs",
+        "found": "CONTRASTS_WITH"
+      },
+      {
+        "source": "BERT",
+        "target": "GLUE",
+        "found": "EVALUATED_ON"
+      },
+      {
+        "source": "BERT",
+        "target": "SQuAD",
+        "found": "EVALUATED_ON"
+      },
+      {
+        "source": "BERT",
+        "target": "masked language modeling",
+        "found": "USES"
+      },
+      {
+        "source": "Transformer",
+        "target": "WMT 2014",
+        "found": "TRAINED_ON"
+      }
+    ],
+    "missed_list": [
+      {
+        "source": "Vision Transformer",
+        "target": "ImageNet",
+        "expected": [
+          "EVALUATED_ON"
+        ]
+      },
+      {
+        "source": "Vision Transformer",
+        "target": "CNNs",
+        "expected": [
+          "CONTRASTS_WITH"
+        ]
+      }
+    ]
+  }
+}
