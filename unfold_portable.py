@@ -282,12 +282,47 @@ def run_standalone_extractor(config: dict):
 
 def extract_knowledge_graph(text: str) -> dict:
     """Extract knowledge graph from text using the full backend pipeline."""
-    try:
-        # Add backend to path
-        backend_path = str(BASE_DIR / "backend")
-        if backend_path not in sys.path:
-            sys.path.insert(0, backend_path)
+    # Add backend to path
+    backend_path = str(BASE_DIR / "backend")
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
 
+    # Check for required dependencies and provide helpful error messages
+    missing_deps = []
+    try:
+        import pydantic_settings
+    except ImportError:
+        missing_deps.append("pydantic-settings")
+
+    try:
+        import spacy
+    except ImportError:
+        missing_deps.append("spacy")
+
+    try:
+        import sqlalchemy
+    except ImportError:
+        missing_deps.append("sqlalchemy")
+
+    if missing_deps:
+        error_msg = f"Missing required dependencies: {', '.join(missing_deps)}\n"
+        error_msg += "\nTo install all dependencies, run:\n"
+        error_msg += "  pip install -r requirements_portable.txt\n"
+        error_msg += "\nOr install individually:\n"
+        for dep in missing_deps:
+            error_msg += f"  pip install {dep}\n"
+
+        print(f"\n{'='*60}")
+        print("DEPENDENCY ERROR")
+        print('='*60)
+        print(error_msg)
+        print('='*60 + "\n")
+
+        # Fall back to simple Ollama extraction if available
+        print("  [Fallback] Attempting Ollama-based extraction...")
+        return extract_with_ollama_fallback(text)
+
+    try:
         from app.services.graph.integrated_pipeline import IntegratedRelationExtractor
         from app.services.graph.extractor import extract_entities
 
@@ -324,6 +359,21 @@ def extract_knowledge_graph(text: str) -> dict:
                 for r in relations
             ],
         }
+    except ImportError as e:
+        module_name = str(e).replace("No module named ", "").strip("'\"")
+        error_msg = f"Missing module: {module_name}\n"
+        error_msg += "\nTo install all dependencies, run:\n"
+        error_msg += "  pip install -r requirements_portable.txt"
+
+        print(f"\n{'='*60}")
+        print("IMPORT ERROR")
+        print('='*60)
+        print(error_msg)
+        print('='*60 + "\n")
+
+        # Fall back to Ollama
+        print("  [Fallback] Attempting Ollama-based extraction...")
+        return extract_with_ollama_fallback(text)
     except Exception as e:
         import traceback
         print(f"  [Extraction] Error: {e}")
@@ -331,6 +381,118 @@ def extract_knowledge_graph(text: str) -> dict:
         return {
             "success": False,
             "error": str(e),
+            "entities": [],
+            "relations": [],
+        }
+
+
+def extract_with_ollama_fallback(text: str) -> dict:
+    """Fallback extraction using Ollama when dependencies are missing."""
+    try:
+        import httpx
+    except ImportError:
+        return {
+            "success": False,
+            "error": "Cannot perform extraction: missing dependencies (pydantic-settings, spacy, etc.) and httpx for Ollama fallback.\n\nRun: pip install -r requirements_portable.txt",
+            "entities": [],
+            "relations": [],
+        }
+
+    try:
+        config = load_config()
+        ollama_url = config.get("ollama_host", "http://localhost:11434")
+        model = config.get("llm_model", "llama3.2")
+
+        # Check if Ollama is available
+        try:
+            check_response = httpx.get(f"{ollama_url}/api/tags", timeout=2.0)
+            if check_response.status_code != 200:
+                raise Exception("Ollama not responding")
+        except Exception:
+            return {
+                "success": False,
+                "error": f"Backend dependencies missing and Ollama not available at {ollama_url}.\n\nEither:\n1. Install dependencies: pip install -r requirements_portable.txt\n2. Or start Ollama: ollama serve",
+                "entities": [],
+                "relations": [],
+            }
+
+        prompt = f"""Extract entities and relationships from the following text.
+Return a JSON object with this exact structure:
+{{
+  "entities": [
+    {{"text": "entity name", "type": "PERSON|ORGANIZATION|CONCEPT|METHOD|DATASET|LOCATION|OTHER"}}
+  ],
+  "relations": [
+    {{"source": "entity1", "target": "entity2", "type": "RELATED_TO|USES|CREATES|PART_OF|AFFILIATED_WITH"}}
+  ]
+}}
+
+Text to analyze:
+{text[:3000]}
+
+Return ONLY valid JSON, no other text."""
+
+        print(f"  [Ollama] Using model: {model}")
+        response = httpx.post(
+            f"{ollama_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                "format": "json",
+            },
+            timeout=60.0,
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            llm_response = result.get("response", "{}")
+
+            try:
+                extracted = json.loads(llm_response)
+                entities = extracted.get("entities", [])
+                relations = extracted.get("relations", [])
+
+                print(f"  [Ollama] Extracted {len(entities)} entities, {len(relations)} relations")
+                return {
+                    "success": True,
+                    "entities": entities,
+                    "relations": [
+                        {
+                            "source": r.get("source", ""),
+                            "target": r.get("target", ""),
+                            "type": r.get("type", "RELATED_TO"),
+                            "confidence": 0.8,
+                            "method": "ollama_fallback",
+                        }
+                        for r in relations
+                    ],
+                }
+            except json.JSONDecodeError as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to parse Ollama response as JSON: {e}",
+                    "entities": [],
+                    "relations": [],
+                }
+        else:
+            return {
+                "success": False,
+                "error": f"Ollama request failed with status {response.status_code}",
+                "entities": [],
+                "relations": [],
+            }
+    except httpx.TimeoutException:
+        return {
+            "success": False,
+            "error": f"Ollama request timed out. The model may be loading or the text is too long.",
+            "entities": [],
+            "relations": [],
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Extraction failed: {str(e)}",
             "entities": [],
             "relations": [],
         }
