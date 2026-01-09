@@ -55,19 +55,15 @@ if ! pip3 show pyinstaller &> /dev/null; then
 fi
 
 # Install dependencies
-echo "[3/6] Installing dependencies..."
+echo "[3/5] Installing dependencies..."
 pip3 install -r requirements_portable.txt || true
 
-# Download spaCy model
-echo "[4/6] Downloading spaCy English model..."
-python3 -m spacy download en_core_web_sm || echo "Warning: Could not download spaCy model"
-
 # Build executable
-echo "[5/6] Building executable with PyInstaller..."
+echo "[4/5] Building executable with PyInstaller..."
 pyinstaller unfold.spec --noconfirm
 
 # Create package structure
-echo "[6/6] Creating portable package structure..."
+echo "[5/5] Creating portable package structure..."
 mkdir -p dist/Unfold_Portable/unfold_data/{graphs,cache}
 
 if [ -f "dist/Unfold" ]; then
