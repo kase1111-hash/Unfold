@@ -28,7 +28,7 @@ class FlashcardGenerator:
     """
 
     def __init__(self):
-        self.api_key = settings.OPENAI_API_KEY
+        self.api_key = settings.openai_api_key
         self.model = "gpt-4o-mini"  # Cost-effective for flashcard generation
         self._client: Optional[httpx.AsyncClient] = None
 
