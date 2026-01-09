@@ -1,0 +1,13 @@
+{
+  "baseline": {
+    "recall": 56.25,
+    "total": 29,
+    "meaningful": 0
+  },
+  "enhanced": {
+    "recall": 75.0,
+    "total": 52,
+    "meaningful": 32
+  },
+  "improvement": 18.75
+}
