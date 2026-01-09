@@ -281,18 +281,23 @@ def run_standalone_extractor(config: dict):
 
 
 def extract_knowledge_graph(text: str) -> dict:
-    """Extract knowledge graph from text using available methods."""
+    """Extract knowledge graph from text using the full backend pipeline."""
     try:
-        # Try to use the integrated pipeline
-        sys.path.insert(0, str(BASE_DIR / "backend"))
+        # Add backend to path
+        backend_path = str(BASE_DIR / "backend")
+        if backend_path not in sys.path:
+            sys.path.insert(0, backend_path)
 
         from app.services.graph.integrated_pipeline import IntegratedRelationExtractor
         from app.services.graph.extractor import extract_entities
 
         # Extract entities
+        print("  [Extraction] Extracting entities...")
         entities = extract_entities(text)
+        print(f"  [Extraction] Found {len(entities)} entities")
 
         # Extract relations
+        print("  [Extraction] Extracting relations...")
         extractor = IntegratedRelationExtractor(
             use_coreference=True,
             use_dependency=True,
@@ -300,6 +305,7 @@ def extract_knowledge_graph(text: str) -> dict:
             use_patterns=True,
         )
         relations = extractor.extract_relations(text, entities)
+        print(f"  [Extraction] Found {len(relations)} relations")
 
         return {
             "success": True,
@@ -319,6 +325,9 @@ def extract_knowledge_graph(text: str) -> dict:
             ],
         }
     except Exception as e:
+        import traceback
+        print(f"  [Extraction] Error: {e}")
+        traceback.print_exc()
         return {
             "success": False,
             "error": str(e),

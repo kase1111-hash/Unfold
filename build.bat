@@ -49,17 +49,21 @@ if errorlevel 1 (
     )
 )
 
-echo [3/6] Installing required dependencies...
-pip install -r backend\requirements.txt --quiet 2>NUL
+echo [3/7] Installing required dependencies...
+pip install -r requirements_portable.txt
 if errorlevel 1 (
     echo WARNING: Some dependencies may not have installed correctly
     echo Continuing with build...
 )
 
-REM Install additional portable dependencies
-pip install httpx uvicorn[standard] --quiet 2>NUL
+echo [4/7] Downloading spaCy English model...
+python -m spacy download en_core_web_sm
+if errorlevel 1 (
+    echo WARNING: Could not download spaCy model
+    echo Some NLP features may not work
+)
 
-echo [4/6] Creating version info...
+echo [5/7] Creating version info...
 echo VSVersionInfo( > version_info.txt
 echo   ffi=FixedFileInfo( >> version_info.txt
 echo     filevers=(1, 0, 0, 0), >> version_info.txt
@@ -88,7 +92,7 @@ echo     VarFileInfo([VarStruct(u'Translation', [1033, 1200])]) >> version_info.
 echo   ] >> version_info.txt
 echo ) >> version_info.txt
 
-echo [5/6] Building executable with PyInstaller...
+echo [6/7] Building executable with PyInstaller...
 echo.
 python -m PyInstaller unfold.spec --noconfirm
 if errorlevel 1 (
@@ -96,7 +100,7 @@ if errorlevel 1 (
     goto :error
 )
 
-echo [6/6] Creating USB package structure...
+echo [7/7] Creating USB package structure...
 if not exist "dist\Unfold_Portable" mkdir "dist\Unfold_Portable"
 
 REM Copy executable
