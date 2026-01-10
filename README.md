@@ -869,3 +869,38 @@ This project is licensed under the AGPL v3 License - see the [LICENSE](LICENSE) 
 - Knowledge graphs with [Neo4j](https://neo4j.com/)
 - Vector search with [FAISS](https://github.com/facebookresearch/faiss)
 - Spaced repetition based on [SM2 algorithm](https://www.supermemo.com/en/archives1990-2015/english/ol/sm2)
+
+## Part of the Authenticity Economy Ecosystem
+
+Unfold is part of a broader ecosystem of tools focused on **human-AI collaboration**, **natural language programming**, and **owned AI infrastructure**. These connected projects share common principles of preserving human intent and cognitive value.
+
+### NatLangChain Ecosystem
+
+| Repository | Description |
+|------------|-------------|
+| [NatLangChain](https://github.com/kase1111-hash/NatLangChain) | Prose-first, intent-native blockchain protocol for recording human intent in natural language |
+| [IntentLog](https://github.com/kase1111-hash/IntentLog) | Git for human reasoning - tracks "why" changes happen via prose commits |
+| [RRA-Module](https://github.com/kase1111-hash/RRA-Module) | Revenant Repo Agent - converts abandoned GitHub repositories into autonomous AI agents |
+| [mediator-node](https://github.com/kase1111-hash/mediator-node) | LLM mediation layer for matching, negotiation, and closure proposals |
+| [ILR-module](https://github.com/kase1111-hash/ILR-module) | IP & Licensing Reconciliation - dispute resolution for intellectual property conflicts |
+| [Finite-Intent-Executor](https://github.com/kase1111-hash/Finite-Intent-Executor) | Posthumous execution of predefined intent via Solidity smart contracts |
+
+### Agent-OS Ecosystem
+
+| Repository | Description |
+|------------|-------------|
+| [Agent-OS](https://github.com/kase1111-hash/Agent-OS) | Natural-language native operating system (NLOS) for AI agents |
+| [synth-mind](https://github.com/kase1111-hash/synth-mind) | NLOS-based agent with six psychological modules for emergent continuity and empathy |
+| [boundary-daemon](https://github.com/kase1111-hash/boundary-daemon-) | Mandatory trust enforcement layer for Agent OS defining cognition boundaries |
+| [memory-vault](https://github.com/kase1111-hash/memory-vault) | Secure, offline-capable, owner-sovereign storage for cognitive artifacts |
+| [value-ledger](https://github.com/kase1111-hash/value-ledger) | Economic accounting layer for cognitive work (ideas, effort, novelty) |
+| [learning-contracts](https://github.com/kase1111-hash/learning-contracts) | Safety protocols for AI learning and data management |
+
+### Security & Games
+
+| Repository | Description |
+|------------|-------------|
+| [Boundary-SIEM](https://github.com/kase1111-hash/Boundary-SIEM) | Security Information and Event Management system for AI |
+| [Shredsquatch](https://github.com/kase1111-hash/Shredsquatch) | 3D first-person snowboarding infinite runner (SkiFree homage) |
+| [Midnight-pulse](https://github.com/kase1111-hash/Midnight-pulse) | Procedurally generated night drive game |
+| [Long-Home](https://github.com/kase1111-hash/Long-Home) | Narrative indie game built with Godot |
