@@ -1,18 +1,8 @@
 # Unfold
 
-**AI-Assisted Reading and Comprehension Platform for Human-AI Collaboration**
+**LLM-Powered AI Reading Assistant & Semantic Comprehension Platform**
 
-Unfold bridges the gap between dense academic/technical texts and genuine understanding through modular AI assistance, emphasizing ethics, explainability, and educational collaboration. Built on principles of **prose-first development** and **language-native architecture**, Unfold transforms how humans interact with complex information.
-
-## What Problem Does This Solve?
-
-- How do I understand complex academic papers without getting lost?
-- How can AI help me learn while preserving my **cognitive work value**?
-- How do I track my understanding evolution over time with **process legibility**?
-- How can I own my learning data with **digital sovereignty** and **data ownership**?
-- How do I verify document authenticity and **human authorship verification**?
-
-Unfold addresses these challenges by providing a **self-hosted AI** reading assistant that values **human cognitive labor** and supports **intent preservation** throughout your learning journey.
+Unfold is a natural language processing platform that bridges the gap between dense academic/technical texts and genuine understanding. This AI-assisted reading tool uses semantic understanding, knowledge graph construction, and human-AI collaboration to transform how students and researchers engage with complex material. Built for those asking "how to understand academic papers faster" and "AI tools for research comprehension," Unfold emphasizes ethics, explainability, and educational collaboration while preserving human cognitive work and authorship in the learning process.
 
 ## Table of Contents
 
@@ -25,6 +15,7 @@ Unfold addresses these challenges by providing a **self-hosted AI** reading assi
 - [Frontend Development](#frontend-development)
 - [Testing](#testing)
 - [Deployment](#deployment)
+- [Connected Repositories](#connected-repositories)
 - [License](#license)
 
 ## Features
@@ -36,10 +27,11 @@ Unfold addresses these challenges by providing a **self-hosted AI** reading assi
 - **License Compliance** - Creative Commons validation
 
 ### Knowledge Graph
-- **Entity Extraction** - Automatic concept identification using spaCy + LLMs
-- **Relation Mapping** - Build semantic connections between concepts
-- **Graph Visualization** - Interactive D3.js exploration
-- **External Linking** - Wikipedia and Semantic Scholar integration
+Build a semantic knowledge graph from any document using LLM-powered entity extraction and natural language understanding.
+- **Entity Extraction** - Automatic concept identification using spaCy + LLMs for prose-based semantic analysis
+- **Relation Mapping** - Build semantic connections between concepts with intent-native relationship detection
+- **Graph Visualization** - Interactive D3.js exploration for human-readable knowledge representation
+- **External Linking** - Wikipedia and Semantic Scholar integration for knowledge augmentation
 
 ### Reading Interface
 - **Dual-View Mode** - Toggle between technical and conceptual views
@@ -48,10 +40,11 @@ Unfold addresses these challenges by providing a **self-hosted AI** reading assi
 - **Semantic Overlays** - Term tooltips with concept previews
 
 ### Adaptive Learning
-- **Flashcard Generation** - AI-powered question synthesis (T5/FLAN)
-- **Spaced Repetition** - SM2 algorithm for optimal review scheduling
-- **Engagement Tracking** - Monitor reading patterns and comprehension
-- **Export Options** - Anki, Obsidian, and Markdown formats
+Cognitive version control for your learning journey - track what you've learned and why it matters.
+- **Flashcard Generation** - AI-powered question synthesis (T5/FLAN) for automated study material creation
+- **Spaced Repetition** - SM2 algorithm for optimal review scheduling and reasoning audit trails
+- **Engagement Tracking** - Monitor reading patterns, comprehension metrics, and cognitive work attribution
+- **Export Options** - Anki, Obsidian, and Markdown formats for sovereign data ownership
 
 ### Scholar Mode
 - **Citation Trees** - Explore reference chains (up to 3 hops)
@@ -60,10 +53,11 @@ Unfold addresses these challenges by providing a **self-hosted AI** reading assi
 - **Reflection Engine** - Track understanding evolution over time
 
 ### Ethics & Privacy
-- **Bias Auditing** - Sentiment analysis and inclusivity checks
-- **GDPR Compliance** - Consent management and data portability
-- **Differential Privacy** - Anonymized analytics
-- **Transparency Dashboard** - AI operation tracking
+Digital sovereignty and data ownership are core principles - you control your learning data.
+- **Bias Auditing** - Sentiment analysis and inclusivity checks for human authorship verification
+- **GDPR Compliance** - Consent management and data portability for self-hosted AI privacy
+- **Differential Privacy** - Anonymized analytics with proof of human work preservation
+- **Transparency Dashboard** - AI operation tracking for process legibility and explainable AI
 
 ## Architecture
 
@@ -835,6 +829,34 @@ volumes:
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Connected Repositories
+
+Unfold is part of a broader ecosystem of tools focused on human-AI collaboration, cognitive work preservation, and natural language-first computing. Explore these related projects:
+
+### NatLangChain Ecosystem
+- **[NatLangChain](https://github.com/kase1111-hash/NatLangChain)** - Prose-first, intent-native blockchain protocol for recording human intent in natural language
+- **[IntentLog](https://github.com/kase1111-hash/IntentLog)** - Git for human reasoning; tracks "why" changes happen via prose commits and semantic version control
+- **[RRA-Module](https://github.com/kase1111-hash/RRA-Module)** - Revenant Repo Agent for autonomous licensing and abandoned repo monetization
+- **[mediator-node](https://github.com/kase1111-hash/mediator-node)** - LLM mediation layer for semantic matching and natural language negotiation
+- **[ILR-module](https://github.com/kase1111-hash/ILR-module)** - IP & Licensing Reconciliation for automated dispute resolution
+- **[Finite-Intent-Executor](https://github.com/kase1111-hash/Finite-Intent-Executor)** - Posthumous smart contract execution for digital estate automation
+
+### Agent-OS Ecosystem
+- **[Agent-OS](https://github.com/kase1111-hash/Agent-OS)** - Natural language operating system for AI agents with constitutional AI governance
+- **[synth-mind](https://github.com/kase1111-hash/synth-mind)** - NLOS-based agent with psychological AI architecture for emergent continuity and empathy
+- **[boundary-daemon-](https://github.com/kase1111-hash/boundary-daemon-)** - Trust enforcement layer defining AI cognition boundaries and security policies
+- **[memory-vault](https://github.com/kase1111-hash/memory-vault)** - Sovereign, offline-capable storage for cognitive artifacts and AI memory ownership
+- **[value-ledger](https://github.com/kase1111-hash/value-ledger)** - Economic accounting layer for cognitive work, idea attribution, and thought valuation
+- **[learning-contracts](https://github.com/kase1111-hash/learning-contracts)** - Safety protocols and governance framework for AI learning boundaries
+
+### Security & Infrastructure
+- **[Boundary-SIEM](https://github.com/kase1111-hash/Boundary-SIEM)** - Security Information and Event Management for AI agent monitoring
+
+### Games
+- **[Shredsquatch](https://github.com/kase1111-hash/Shredsquatch)** - 3D first-person snowboarding infinite runner (SkiFree spiritual successor)
+- **[Midnight-pulse](https://github.com/kase1111-hash/Midnight-pulse)** - Procedurally generated synthwave night driving experience
+- **[Long-Home](https://github.com/kase1111-hash/Long-Home)** - Atmospheric narrative indie game built with Godot
 
 ## License
 
