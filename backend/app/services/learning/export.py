@@ -9,7 +9,7 @@ import io
 import zipfile
 import re
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass
 
 
@@ -127,7 +127,7 @@ class ExportService:
         data = {
             "deck_name": deck_name,
             "cards": [],
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "source": "Unfold",
         }
 
@@ -180,7 +180,7 @@ class ExportService:
                 [
                     "---",
                     f"title: {title}",
-                    f"created: {datetime.utcnow().strftime('%Y-%m-%d')}",
+                    f"created: {datetime.now(timezone.utc).strftime('%Y-%m-%d')}",
                     "tags:",
                     "  - flashcards",
                     "  - unfold-export",
@@ -193,7 +193,7 @@ class ExportService:
         lines.append(f"# {title}")
         lines.append("")
         lines.append(
-            f"*Exported from Unfold on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}*"
+            f"*Exported from Unfold on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}*"
         )
         lines.append("")
 
@@ -243,7 +243,7 @@ class ExportService:
         lines = [
             f"# {title}",
             "",
-            f"*Exported from Unfold on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}*",
+            f"*Exported from Unfold on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}*",
             "",
         ]
 
@@ -344,7 +344,7 @@ class ExportService:
 
         if include_metadata:
             data["metadata"] = {
-                "exported_at": datetime.utcnow().isoformat(),
+                "exported_at": datetime.now(timezone.utc).isoformat(),
                 "source": "Unfold",
                 "version": "1.0",
                 "count": len(flashcards),
@@ -432,7 +432,7 @@ This bundle contains flashcards exported from Unfold in multiple formats.
 2. For spaced repetition, install the "Spaced Repetition" community plugin
 3. Use the `_sr.md` file format with that plugin
 
-Exported on: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
+Exported on: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC
 """
             zf.writestr("README.md", readme)
 

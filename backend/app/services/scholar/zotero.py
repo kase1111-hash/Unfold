@@ -5,7 +5,7 @@ Generates Zotero-compatible RIS, BibTeX, and CSL-JSON exports.
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -41,7 +41,7 @@ class ZoteroCollection:
     name: str
     items: list[ZoteroItem] = field(default_factory=list)
     description: Optional[str] = None
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ZoteroExporter:

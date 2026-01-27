@@ -4,7 +4,7 @@ Provides metrics and insights about AI operations and ethical practices.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from enum import Enum
 import uuid
@@ -97,7 +97,7 @@ class UserEthicsProfile:
     """User's ethics and transparency profile."""
 
     user_id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Preferences
     transparency_level: TransparencyLevel = TransparencyLevel.FULL
@@ -129,11 +129,11 @@ class EthicsDashboard:
     """Complete ethics dashboard for a user."""
 
     user_id: str
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     period_start: datetime = field(
-        default_factory=lambda: datetime.utcnow() - timedelta(days=30)
+        default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=30)
     )
-    period_end: datetime = field(default_factory=datetime.utcnow)
+    period_end: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Summary stats
     ai_operations_count: int = 0
@@ -179,11 +179,11 @@ class AggregatedReport:
     """Aggregated ethics report (anonymized across users)."""
 
     report_id: str
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     period_start: datetime = field(
-        default_factory=lambda: datetime.utcnow() - timedelta(days=30)
+        default_factory=lambda: datetime.now(timezone.utc) - timedelta(days=30)
     )
-    period_end: datetime = field(default_factory=datetime.utcnow)
+    period_end: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Aggregated metrics
     total_users: int = 0
@@ -302,7 +302,7 @@ class EthicsAnalytics:
         operation = AIOperation(
             operation_id=f"op_{uuid.uuid4().hex[:12]}",
             operation_type=operation_type,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             user_id=user_id,
             model_used=model_used,
             input_tokens=input_tokens,
@@ -352,7 +352,7 @@ class EthicsAnalytics:
             name=name,
             value=value,
             unit=unit,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             context=context or {},
         )
 
@@ -435,8 +435,8 @@ class EthicsAnalytics:
         Returns:
             EthicsDashboard
         """
-        period_start = datetime.utcnow() - timedelta(days=period_days)
-        period_end = datetime.utcnow()
+        period_start = datetime.now(timezone.utc) - timedelta(days=period_days)
+        period_end = datetime.now(timezone.utc)
 
         # Get operations in period
         operations = self.get_user_operations(user_id, since=period_start, limit=1000)
@@ -575,7 +575,7 @@ class EthicsAnalytics:
         Returns:
             AggregatedReport with anonymized data
         """
-        period_start = datetime.utcnow() - timedelta(days=period_days)
+        period_start = datetime.now(timezone.utc) - timedelta(days=period_days)
 
         # Filter to consenting users
         consenting_users = [
@@ -660,7 +660,7 @@ class EthicsAnalytics:
         return {
             "export_id": f"ethics_export_{uuid.uuid4().hex[:12]}",
             "user_id": user_id,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "profile": profile.to_dict(),
             "operations": [op.to_dict() for op in operations],
             "metrics": [m.to_dict() for m in metrics],

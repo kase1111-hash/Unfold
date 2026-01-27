@@ -3,7 +3,7 @@ Engagement Tracker for measuring user reading behavior.
 Tracks dwell time, scroll depth, interactions, and comprehension signals.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -32,7 +32,7 @@ class ReadingSession:
     session_id: str
     user_id: str
     document_id: str
-    started_at: datetime = field(default_factory=datetime.utcnow)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     ended_at: Optional[datetime] = None
     total_dwell_time_ms: int = 0
     max_scroll_depth: float = 0.0  # 0-1 representing % of document
@@ -47,7 +47,7 @@ class ReadingSession:
     @property
     def duration_minutes(self) -> float:
         """Get session duration in minutes."""
-        end = self.ended_at or datetime.utcnow()
+        end = self.ended_at or datetime.now(timezone.utc)
         delta = end - self.started_at
         return delta.total_seconds() / 60
 
@@ -136,7 +136,7 @@ class EngagementTracker:
         if session is None:
             return None
 
-        session.ended_at = datetime.utcnow()
+        session.ended_at = datetime.now(timezone.utc)
 
         # Update user profile
         self._update_user_profile(session)
@@ -238,7 +238,7 @@ class EngagementTracker:
 
         interaction = {
             "type": interaction_type.value,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
         }
         session.interactions.append(interaction)

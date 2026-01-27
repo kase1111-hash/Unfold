@@ -5,7 +5,7 @@ Builds hierarchical citation networks from academic papers.
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -56,7 +56,7 @@ class CitationTree:
     nodes: dict[str, CitationNode] = field(default_factory=dict)
     edges: list[CitationEdge] = field(default_factory=list)
     max_depth: int = 2
-    built_at: datetime = field(default_factory=datetime.utcnow)
+    built_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def total_nodes(self) -> int:

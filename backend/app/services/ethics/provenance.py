@@ -7,7 +7,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -39,7 +39,7 @@ class ProvenanceAssertion:
     assertion_id: str
     action: ProvenanceAction
     actor: str  # User ID or system component
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     description: Optional[str] = None
     metadata: dict = field(default_factory=dict)
 
@@ -61,7 +61,7 @@ class ContentCredential:
     credential_id: str
     document_id: str
     content_hash: str  # SHA-256 hash of content
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Validation
     validation_status: ValidationStatus = ValidationStatus.PENDING
@@ -105,8 +105,8 @@ class ProvenanceManifest:
     manifest_id: str
     document_id: str
     title: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Content credential
     credential: Optional[ContentCredential] = None
