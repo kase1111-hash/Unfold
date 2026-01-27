@@ -4,7 +4,7 @@ Evaluates paper and source credibility for academic content.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -150,7 +150,7 @@ class CredibilityScorer:
 
         # Normalize by age (citations per year)
         if year:
-            age = max(1, datetime.utcnow().year - year)
+            age = max(1, datetime.now(timezone.utc).year - year)
             citations_per_year = citation_count / age
         else:
             citations_per_year = citation_count / 5  # Assume 5 years
@@ -216,7 +216,7 @@ class CredibilityScorer:
         if not year:
             return 50.0
 
-        age = datetime.utcnow().year - year
+        age = datetime.now(timezone.utc).year - year
 
         if age <= 1:
             return 95.0

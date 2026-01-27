@@ -4,7 +4,7 @@ Tracks how understanding evolves over multiple reading sessions.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 import hashlib
@@ -29,7 +29,7 @@ class ReadingSnapshot:
     snapshot_id: str
     user_id: str
     document_id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     reflection_type: ReflectionType = ReflectionType.INITIAL_READING
 
     # Understanding metrics
@@ -187,7 +187,7 @@ class ReflectionEngine:
 
         # Generate snapshot ID
         snapshot_id = (
-            f"snap_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{user_id[:6]}"
+            f"snap_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{user_id[:6]}"
         )
 
         # Estimate comprehension based on engagement signals
@@ -463,7 +463,7 @@ class ReflectionEngine:
         # Based on time between reads
         if len(snapshots) >= 2:
             time_since = (
-                datetime.utcnow() - latest.created_at
+                datetime.now(timezone.utc) - latest.created_at
             ).total_seconds() / 86400  # Days
 
             if time_since > 7:

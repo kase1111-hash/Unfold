@@ -206,8 +206,6 @@ class AuthService:
         # Hash new password and update
         new_hashed = hash_password(new_password)
 
-        # For now, we'd need to add an update_password method to the repository
-        # This is a placeholder - in production, add the proper repository method
         from sqlalchemy import update
         from app.db.models.user import UserORM
 
@@ -216,5 +214,6 @@ class AuthService:
             .where(UserORM.user_id == user_id)
             .values(hashed_password=new_hashed)
         )
+        await self.session.flush()
 
         return True

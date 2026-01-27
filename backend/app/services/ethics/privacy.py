@@ -7,7 +7,7 @@ import hashlib
 import random
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 from enum import Enum
 import uuid
@@ -99,7 +99,7 @@ class PrivacyReport:
 
     report_id: str
     user_id: str
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Data categories held
     data_categories: list[DataCategory] = field(default_factory=list)
@@ -386,9 +386,9 @@ class PrivacyCompliance:
             user_id=user_id,
             consent_type=consent_type,
             status=ConsentStatus.GRANTED if granted else ConsentStatus.DENIED,
-            granted_at=datetime.utcnow() if granted else None,
+            granted_at=datetime.now(timezone.utc) if granted else None,
             expires_at=(
-                datetime.utcnow() + timedelta(days=expires_days) if granted else None
+                datetime.now(timezone.utc) + timedelta(days=expires_days) if granted else None
             ),
             ip_address=self.anonymize_ip_address(ip_address) if ip_address else None,
             user_agent=user_agent[:100] if user_agent else None,
@@ -422,7 +422,7 @@ class PrivacyCompliance:
 
         consent = self._consents[user_id][consent_type]
         consent.status = ConsentStatus.WITHDRAWN
-        consent.withdrawn_at = datetime.utcnow()
+        consent.withdrawn_at = datetime.now(timezone.utc)
 
         return consent
 
@@ -453,7 +453,7 @@ class PrivacyCompliance:
             return False
 
         # Check expiration
-        if consent.expires_at and consent.expires_at < datetime.utcnow():
+        if consent.expires_at and consent.expires_at < datetime.now(timezone.utc):
             return False
 
         return True
@@ -556,10 +556,10 @@ class PrivacyCompliance:
         return {
             "deletion_id": deletion_id,
             "user_id": user_id,
-            "requested_at": datetime.utcnow().isoformat(),
+            "requested_at": datetime.now(timezone.utc).isoformat(),
             "status": "processing",
             "estimated_completion": (
-                datetime.utcnow() + timedelta(days=30)
+                datetime.now(timezone.utc) + timedelta(days=30)
             ).isoformat(),
             "categories_to_delete": [
                 DataCategory.IDENTIFIER.value,
@@ -588,7 +588,7 @@ class PrivacyCompliance:
         return {
             "export_id": f"export_{uuid.uuid4().hex[:12]}",
             "user_id": user_id,
-            "exported_at": datetime.utcnow().isoformat(),
+            "exported_at": datetime.now(timezone.utc).isoformat(),
             "format": "application/json",
             "data": user_data,
             "consents": [c.to_dict() for c in self.get_user_consents(user_id)],

@@ -4,7 +4,7 @@ Enables real-time collaborative annotations on documents.
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 import uuid
@@ -50,8 +50,8 @@ class Annotation:
     section_id: Optional[str] = None
 
     # Metadata
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     parent_id: Optional[str] = None  # For replies/threads
     tags: list[str] = field(default_factory=list)
     reactions: dict[str, list[str]] = field(default_factory=dict)  # emoji -> user_ids
@@ -162,7 +162,7 @@ class AnnotationCRDT:
 
         operation = CRDTOperation(
             operation_id=str(uuid.uuid4()),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             user_id=annotation.user_id,
             operation_type="insert",
             annotation_id=annotation.annotation_id,
@@ -191,12 +191,12 @@ class AnnotationCRDT:
             if hasattr(annotation, key):
                 setattr(annotation, key, value)
 
-        annotation.updated_at = datetime.utcnow()
+        annotation.updated_at = datetime.now(timezone.utc)
         annotation.vector_clock = clock
 
         operation = CRDTOperation(
             operation_id=str(uuid.uuid4()),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             user_id=user_id,
             operation_type="update",
             annotation_id=annotation_id,
@@ -220,12 +220,12 @@ class AnnotationCRDT:
         clock = self.increment_clock()
 
         annotation.is_deleted = True
-        annotation.updated_at = datetime.utcnow()
+        annotation.updated_at = datetime.now(timezone.utc)
         annotation.vector_clock = clock
 
         operation = CRDTOperation(
             operation_id=str(uuid.uuid4()),
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             user_id=user_id,
             operation_type="delete",
             annotation_id=annotation_id,

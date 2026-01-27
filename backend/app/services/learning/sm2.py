@@ -3,7 +3,7 @@ SM2 Spaced Repetition Algorithm Implementation.
 Based on the SuperMemo 2 algorithm by Piotr Wozniak.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -32,7 +32,7 @@ class CardReviewState:
     easiness_factor: float = 2.5  # EF starts at 2.5
     interval: int = 0  # Days until next review
     repetitions: int = 0  # Number of successful reviews
-    next_review: datetime = field(default_factory=datetime.utcnow)
+    next_review: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     last_review: Optional[datetime] = None
     total_reviews: int = 0
     correct_reviews: int = 0
@@ -47,12 +47,12 @@ class CardReviewState:
     @property
     def is_due(self) -> bool:
         """Check if the card is due for review."""
-        return datetime.utcnow() >= self.next_review
+        return datetime.now(timezone.utc) >= self.next_review
 
     @property
     def days_until_due(self) -> int:
         """Days until card is due (negative if overdue)."""
-        delta = self.next_review - datetime.utcnow()
+        delta = self.next_review - datetime.now(timezone.utc)
         return delta.days
 
 
@@ -116,7 +116,7 @@ class SM2Scheduler:
             state = self.add_card(card_id)
 
         state.total_reviews += 1
-        state.last_review = datetime.utcnow()
+        state.last_review = datetime.now(timezone.utc)
 
         # Quality < 3 means incorrect response - reset repetitions
         if quality < ResponseQuality.DIFFICULT_CORRECT:
@@ -143,7 +143,7 @@ class SM2Scheduler:
             state.repetitions += 1
 
         # Schedule next review
-        state.next_review = datetime.utcnow() + timedelta(days=state.interval)
+        state.next_review = datetime.now(timezone.utc) + timedelta(days=state.interval)
 
         return state
 
@@ -160,7 +160,7 @@ class SM2Scheduler:
         Returns:
             List of due cards, sorted by overdue time
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         due_cards = [card for card in self._cards.values() if card.next_review <= now]
 
         # Sort by how overdue they are (most overdue first)
@@ -184,7 +184,7 @@ class SM2Scheduler:
         Returns:
             List of upcoming cards with their scheduled dates
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = now + timedelta(days=days)
 
         upcoming = [
@@ -212,7 +212,7 @@ class SM2Scheduler:
                 "learning_cards": 0,
             }
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today_end = now.replace(hour=23, minute=59, second=59)
 
         due_now = sum(1 for c in self._cards.values() if c.next_review <= now)

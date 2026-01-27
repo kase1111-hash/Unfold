@@ -5,7 +5,7 @@ Implements sentiment analysis and language inclusivity metrics.
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from enum import Enum
 
@@ -104,7 +104,7 @@ class BiasAuditReport:
 
     report_id: str
     document_id: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Sentiment analysis
     overall_sentiment: Optional[SentimentResult] = None
