@@ -1,10 +1,20 @@
 """Application configuration management."""
 
+import logging
+import secrets
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, PostgresDsn, field_validator
+from pydantic import Field, PostgresDsn, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
+
+
+class ConfigurationError(Exception):
+    """Raised when configuration is invalid for the environment."""
+
+    pass
 
 
 class Settings(BaseSettings):
@@ -28,14 +38,14 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # Database - PostgreSQL
-    database_url: PostgresDsn = Field(
-        default="postgresql://postgres:postgres@localhost:5432/unfold"
-    )
+    # In production, DATABASE_URL must be explicitly set
+    database_url: PostgresDsn | None = Field(default=None)
 
     # Database - Neo4j
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
-    neo4j_password: str = "password"
+    # In production, NEO4J_PASSWORD must be explicitly set
+    neo4j_password: str | None = Field(default=None)
 
     # Vector Store - Pinecone
     pinecone_api_key: str | None = None
@@ -57,10 +67,16 @@ class Settings(BaseSettings):
     semantic_scholar_api_key: str | None = None
 
     # Security
-    jwt_secret: str = "change-me-in-production"
+    # JWT_SECRET must be explicitly set - no insecure defaults
+    jwt_secret: str | None = Field(default=None)
     jwt_algorithm: str = "HS256"
     jwt_expiration_minutes: int = 30
     jwt_refresh_expiration_days: int = 7
+
+    # Rate Limiting
+    rate_limit_enabled: bool = True
+    rate_limit_requests_per_minute: int = 60
+    rate_limit_auth_requests_per_minute: int = 10  # Stricter for auth endpoints
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
@@ -87,6 +103,57 @@ class Settings(BaseSettings):
         if isinstance(v, str):
             return [origin.strip() for origin in v.split(",")]
         return v
+
+    @model_validator(mode="after")
+    def validate_production_settings(self) -> "Settings":
+        """Validate that production environment has secure settings."""
+        is_production = self.environment in ("production", "staging")
+
+        # JWT Secret validation
+        if self.jwt_secret is None:
+            if is_production:
+                raise ConfigurationError(
+                    "JWT_SECRET environment variable must be set in production/staging. "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                )
+            # Generate a random secret for development (logged as warning)
+            self.jwt_secret = secrets.token_urlsafe(32)
+            logger.warning(
+                "JWT_SECRET not set - using randomly generated secret. "
+                "This is only acceptable in development mode."
+            )
+
+        if is_production and len(self.jwt_secret) < 32:
+            raise ConfigurationError(
+                "JWT_SECRET must be at least 32 characters in production"
+            )
+
+        # Database URL validation
+        if self.database_url is None:
+            if is_production:
+                raise ConfigurationError(
+                    "DATABASE_URL environment variable must be set in production/staging"
+                )
+            # Use development default
+            self.database_url = PostgresDsn(
+                "postgresql://postgres:postgres@localhost:5432/unfold"
+            )
+
+        # Neo4j password validation
+        if self.neo4j_password is None:
+            if is_production:
+                raise ConfigurationError(
+                    "NEO4J_PASSWORD environment variable must be set in production/staging"
+                )
+            # Use development default
+            self.neo4j_password = "password"
+
+        if is_production and self.neo4j_password == "password":
+            raise ConfigurationError(
+                "NEO4J_PASSWORD cannot be 'password' in production"
+            )
+
+        return self
 
 
 @lru_cache

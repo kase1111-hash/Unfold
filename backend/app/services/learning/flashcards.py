@@ -4,13 +4,17 @@ Generates Q&A pairs for spaced repetition learning.
 """
 
 import json
+import logging
 import re
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Optional
 from enum import Enum
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class QuestionType(str, Enum):
@@ -26,16 +30,29 @@ class QuestionType(str, Enum):
 class FlashcardGenerator:
     """
     Generates flashcards from text using LLM-based question synthesis.
+
+    This class manages an HTTP client for API calls. Use as a context manager
+    or call close() explicitly to ensure proper cleanup.
     """
 
     def __init__(self):
         self.api_key = settings.openai_api_key
         self.model = "gpt-4o-mini"  # Cost-effective for flashcard generation
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True  # Track if we created the client
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None:
+    async def __aenter__(self) -> "FlashcardGenerator":
+        """Async context manager entry."""
+        await self._ensure_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Async context manager exit - cleanup resources."""
+        await self.close()
+
+    async def _ensure_client(self) -> httpx.AsyncClient:
+        """Ensure HTTP client is initialized."""
+        if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url="https://api.openai.com/v1",
                 headers={
@@ -44,6 +61,7 @@ class FlashcardGenerator:
                 },
                 timeout=60.0,
             )
+            self._owns_client = True
         return self._client
 
     async def generate_flashcards(
@@ -105,7 +123,7 @@ Return the flashcards as a JSON array with this structure:
 Return ONLY the JSON array, no additional text."""
 
         try:
-            client = await self._get_client()
+            client = await self._ensure_client()
             response = await client.post(
                 "/chat/completions",
                 json={
@@ -136,8 +154,14 @@ Return ONLY the JSON array, no additional text."""
 
             return flashcards
 
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"LLM API returned error status: {e.response.status_code}")
+            return self._generate_fallback_flashcards(text, num_cards)
+        except httpx.RequestError as e:
+            logger.warning(f"LLM API request failed: {e}")
+            return self._generate_fallback_flashcards(text, num_cards)
         except Exception as e:
-            print(f"LLM flashcard generation failed: {e}")
+            logger.warning(f"LLM flashcard generation failed: {e}")
             return self._generate_fallback_flashcards(text, num_cards)
 
     def _parse_flashcards_json(self, content: str) -> list[dict]:
@@ -314,7 +338,7 @@ Return as JSON:
 }}"""
 
         try:
-            client = await self._get_client()
+            client = await self._ensure_client()
             response = await client.post(
                 "/chat/completions",
                 json={
@@ -338,23 +362,63 @@ Return as JSON:
             return {**flashcard, **enhancements}
 
         except Exception as e:
-            print(f"Flashcard enhancement failed: {e}")
+            logger.warning(f"Flashcard enhancement failed: {e}")
             return flashcard
 
-    async def close(self):
-        """Close the HTTP client."""
-        if self._client:
+    async def close(self) -> None:
+        """Close the HTTP client and release resources."""
+        if self._client is not None and self._owns_client:
             await self._client.aclose()
             self._client = None
+            logger.debug("FlashcardGenerator HTTP client closed")
 
 
-# Singleton instance
+# Module-level client for use with application lifespan
 _flashcard_generator: Optional[FlashcardGenerator] = None
 
 
+async def init_flashcard_generator() -> FlashcardGenerator:
+    """Initialize the global flashcard generator. Call during app startup."""
+    global _flashcard_generator
+    if _flashcard_generator is None:
+        _flashcard_generator = FlashcardGenerator()
+        await _flashcard_generator._ensure_client()
+    return _flashcard_generator
+
+
+async def close_flashcard_generator() -> None:
+    """Close the global flashcard generator. Call during app shutdown."""
+    global _flashcard_generator
+    if _flashcard_generator is not None:
+        await _flashcard_generator.close()
+        _flashcard_generator = None
+
+
 def get_flashcard_generator() -> FlashcardGenerator:
-    """Get or create singleton FlashcardGenerator instance."""
+    """Get the global FlashcardGenerator instance.
+
+    For proper resource management, prefer using the generator as a context manager
+    for one-off operations, or ensure init_flashcard_generator() is called at startup
+    and close_flashcard_generator() at shutdown.
+    """
     global _flashcard_generator
     if _flashcard_generator is None:
         _flashcard_generator = FlashcardGenerator()
     return _flashcard_generator
+
+
+@asynccontextmanager
+async def flashcard_generator_context() -> AsyncIterator[FlashcardGenerator]:
+    """Context manager for using FlashcardGenerator with automatic cleanup.
+
+    Use this for one-off flashcard generation:
+
+        async with flashcard_generator_context() as generator:
+            cards = await generator.generate_flashcards(text)
+    """
+    generator = FlashcardGenerator()
+    try:
+        await generator._ensure_client()
+        yield generator
+    finally:
+        await generator.close()
