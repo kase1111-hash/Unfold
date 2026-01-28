@@ -1,5 +1,7 @@
 """Unfold API - Main application entry point."""
 
+import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,49 +17,62 @@ from app.db import (
     create_neo4j_indexes,
     create_tables,
 )
+from app.middleware import RateLimitMiddleware
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger(__name__)
 
 settings = get_settings()
+
+# Set log level based on environment
+if settings.debug:
+    logging.getLogger("app").setLevel(logging.DEBUG)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
     # Startup
-    print(f"Starting {settings.app_name} v{settings.app_version}")
-    print(f"Environment: {settings.environment}")
+    logger.info(f"Starting {settings.app_name} v{settings.app_version}")
+    logger.info(f"Environment: {settings.environment}")
 
     # Initialize PostgreSQL
     try:
         await init_postgres()
         if settings.environment == "development":
             await create_tables()
-        print("✓ PostgreSQL connected")
+        logger.info("PostgreSQL connected successfully")
     except Exception as e:
-        print(f"✗ PostgreSQL connection failed: {e}")
+        logger.error(f"PostgreSQL connection failed: {e}")
 
     # Initialize Neo4j
     try:
         await init_neo4j()
         await create_neo4j_indexes()
-        print("✓ Neo4j connected")
+        logger.info("Neo4j connected successfully")
     except Exception as e:
-        print(f"✗ Neo4j connection failed: {e}")
+        logger.warning(f"Neo4j connection failed: {e}")
 
     # Initialize FAISS vector store
     try:
         await init_faiss()
-        print("✓ FAISS vector store initialized")
+        logger.info("FAISS vector store initialized")
     except ImportError:
-        print("✗ FAISS not installed (optional)")
+        logger.info("FAISS not installed (optional dependency)")
     except Exception as e:
-        print(f"✗ FAISS initialization failed: {e}")
+        logger.warning(f"FAISS initialization failed: {e}")
 
     yield
 
     # Shutdown
-    print("Shutting down...")
+    logger.info("Shutting down...")
     await close_all_databases()
-    print("All database connections closed")
+    logger.info("All database connections closed")
 
 
 app = FastAPI(
@@ -69,6 +84,9 @@ app = FastAPI(
     openapi_url="/openapi.json",
     lifespan=lifespan,
 )
+
+# Rate limiting middleware (must be added before CORS)
+app.add_middleware(RateLimitMiddleware)
 
 # CORS middleware
 app.add_middleware(

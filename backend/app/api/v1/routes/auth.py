@@ -2,15 +2,42 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import CurrentUser, get_db
+from app.config import get_settings
 from app.models.user import Token, User, UserCreate
 from app.services.auth.service import AuthError, AuthService
 
 router = APIRouter()
+settings = get_settings()
+
+# Cookie settings for refresh token
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+REFRESH_TOKEN_MAX_AGE = settings.jwt_refresh_expiration_days * 24 * 60 * 60  # in seconds
+
+
+def _set_refresh_token_cookie(response: Response, refresh_token: str) -> None:
+    """Set the refresh token as an httpOnly cookie."""
+    response.set_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        value=refresh_token,
+        max_age=REFRESH_TOKEN_MAX_AGE,
+        httponly=True,
+        secure=settings.environment in ("production", "staging"),  # HTTPS only in prod
+        samesite="lax",
+        path="/api/v1/auth",  # Only send to auth endpoints
+    )
+
+
+def _clear_refresh_token_cookie(response: Response) -> None:
+    """Clear the refresh token cookie."""
+    response.delete_cookie(
+        key=REFRESH_TOKEN_COOKIE_NAME,
+        path="/api/v1/auth",
+    )
 
 
 # Request/Response Models
@@ -28,13 +55,30 @@ class RegisterRequest(UserCreate):
 
 
 class RefreshRequest(BaseModel):
-    """Token refresh request body."""
+    """Token refresh request body (optional if using cookie)."""
 
-    refresh_token: str = Field(..., description="Valid refresh token")
+    refresh_token: str | None = Field(None, description="Valid refresh token (optional if using cookie)")
+
+
+class AccessTokenResponse(BaseModel):
+    """Response with access token only (refresh token in cookie)."""
+
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
 
 
 class AuthResponse(BaseModel):
-    """Authentication response with user and tokens."""
+    """Authentication response with user and access token."""
+
+    user: User
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class LegacyAuthResponse(BaseModel):
+    """Legacy authentication response with both tokens (for backward compatibility)."""
 
     user: User
     tokens: Token
@@ -67,16 +111,26 @@ async def get_auth_service(db: Annotated[AsyncSession, Depends(get_db)]) -> Auth
 )
 async def register(
     request: RegisterRequest,
+    response: Response,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> AuthResponse:
     """Register a new user account.
 
     Creates a new user with the provided credentials and returns
-    authentication tokens for immediate login.
+    authentication tokens. The refresh token is set as an httpOnly cookie.
     """
     try:
         user, tokens = await auth_service.register(request)
-        return AuthResponse(user=user, tokens=tokens)
+
+        # Set refresh token as httpOnly cookie
+        _set_refresh_token_cookie(response, tokens.refresh_token)
+
+        return AuthResponse(
+            user=user,
+            access_token=tokens.access_token,
+            token_type=tokens.token_type,
+            expires_in=tokens.expires_in,
+        )
     except AuthError as e:
         if e.code == "EMAIL_EXISTS":
             raise HTTPException(
@@ -101,15 +155,25 @@ async def register(
 )
 async def login(
     request: LoginRequest,
+    response: Response,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> AuthResponse:
     """Authenticate user with email and password.
 
-    Returns user information and authentication tokens on success.
+    Returns user information and access token. The refresh token is set as an httpOnly cookie.
     """
     try:
         user, tokens = await auth_service.login(request.email, request.password)
-        return AuthResponse(user=user, tokens=tokens)
+
+        # Set refresh token as httpOnly cookie
+        _set_refresh_token_cookie(response, tokens.refresh_token)
+
+        return AuthResponse(
+            user=user,
+            access_token=tokens.access_token,
+            token_type=tokens.token_type,
+            expires_in=tokens.expires_in,
+        )
     except AuthError as e:
         if e.code == "INVALID_CREDENTIALS":
             raise HTTPException(
@@ -130,25 +194,68 @@ async def login(
 
 @router.post(
     "/refresh",
-    response_model=Token,
+    response_model=AccessTokenResponse,
     summary="Refresh access token",
 )
 async def refresh_token(
-    request: RefreshRequest,
+    response: Response,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> Token:
+    request: RefreshRequest | None = None,
+    refresh_token_cookie: str | None = Cookie(None, alias=REFRESH_TOKEN_COOKIE_NAME),
+) -> AccessTokenResponse:
     """Refresh access token using a valid refresh token.
 
-    Returns a new token pair (access + refresh tokens).
+    The refresh token can be provided either:
+    1. In the httpOnly cookie (preferred, more secure)
+    2. In the request body (for backward compatibility)
+
+    Returns a new access token. A new refresh token is set as an httpOnly cookie.
     """
+    # Try to get refresh token from cookie first, then from request body
+    token = refresh_token_cookie
+    if not token and request and request.refresh_token:
+        token = request.refresh_token
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "MISSING_REFRESH_TOKEN", "message": "Refresh token required"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
-        return await auth_service.refresh_tokens(request.refresh_token)
+        new_tokens = await auth_service.refresh_tokens(token)
+
+        # Set new refresh token as httpOnly cookie
+        _set_refresh_token_cookie(response, new_tokens.refresh_token)
+
+        return AccessTokenResponse(
+            access_token=new_tokens.access_token,
+            token_type=new_tokens.token_type,
+            expires_in=new_tokens.expires_in,
+        )
     except AuthError as e:
+        # Clear invalid refresh token cookie
+        _clear_refresh_token_cookie(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"code": e.code, "message": e.message},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+@router.post(
+    "/logout",
+    response_model=MessageResponse,
+    summary="Logout user",
+)
+async def logout(response: Response) -> MessageResponse:
+    """Logout the current user.
+
+    Clears the refresh token cookie. The client should also discard the access token.
+    """
+    _clear_refresh_token_cookie(response)
+    return MessageResponse(message="Logged out successfully")
 
 
 @router.get(

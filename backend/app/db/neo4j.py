@@ -1,5 +1,7 @@
 """Neo4j graph database connection and operations."""
 
+import logging
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -20,10 +22,116 @@ except ImportError:
 
 from app.config import get_settings
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Global driver instance
 _driver: AsyncDriver | None = None
+
+# Allowlists for node types and relationship types to prevent injection
+ALLOWED_NODE_TYPES = frozenset({
+    "Concept",
+    "Method",
+    "Person",
+    "Author",
+    "Entity",
+    "Definition",
+    "Paper",
+    "Dataset",
+    "Organization",
+    "Location",
+    "Event",
+    "Term",
+    "Topic",
+})
+
+ALLOWED_RELATIONSHIP_TYPES = frozenset({
+    "RELATES_TO",
+    "DEFINES",
+    "CREATED_BY",
+    "CITED_BY",
+    "CITES",
+    "DEPENDS_ON",
+    "EXPLAINS",
+    "CONTAINS",
+    "PART_OF",
+    "AUTHORED_BY",
+    "PUBLISHED_IN",
+    "REFERENCES",
+    "SIMILAR_TO",
+    "DERIVED_FROM",
+    "INFLUENCES",
+    "PRECEDES",
+    "FOLLOWS",
+})
+
+
+class Neo4jValidationError(ValueError):
+    """Raised when Neo4j input validation fails."""
+
+    pass
+
+
+def _validate_identifier(value: str, allowed: frozenset[str], name: str) -> str:
+    """Validate that an identifier is in the allowlist.
+
+    Args:
+        value: The identifier to validate
+        allowed: Set of allowed values
+        name: Name of the identifier type (for error messages)
+
+    Returns:
+        The validated identifier
+
+    Raises:
+        Neo4jValidationError: If validation fails
+    """
+    if not value:
+        raise Neo4jValidationError(f"{name} cannot be empty")
+
+    # Check against allowlist
+    if value not in allowed:
+        # Also check for valid Neo4j identifier format as fallback
+        # Only allow alphanumeric and underscore, starting with letter
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_]*$", value):
+            raise Neo4jValidationError(
+                f"Invalid {name}: '{value}'. Must be alphanumeric starting with a letter."
+            )
+        logger.warning(
+            f"Unknown {name} '{value}' used - not in allowlist but format is valid"
+        )
+
+    return value
+
+
+def validate_node_type(node_type: str) -> str:
+    """Validate a node type against the allowlist.
+
+    Args:
+        node_type: The node type to validate
+
+    Returns:
+        The validated node type
+
+    Raises:
+        Neo4jValidationError: If the node type is invalid
+    """
+    return _validate_identifier(node_type, ALLOWED_NODE_TYPES, "node type")
+
+
+def validate_relationship_type(rel_type: str) -> str:
+    """Validate a relationship type against the allowlist.
+
+    Args:
+        rel_type: The relationship type to validate
+
+    Returns:
+        The validated relationship type
+
+    Raises:
+        Neo4jValidationError: If the relationship type is invalid
+    """
+    return _validate_identifier(rel_type, ALLOWED_RELATIONSHIP_TYPES, "relationship type")
 
 
 async def init_neo4j() -> "AsyncDriver | None":
@@ -169,17 +277,23 @@ async def create_node(
 
     Args:
         session: Neo4j session
-        node_type: Node label (Concept, Author, Paper, etc.)
+        node_type: Node label (Concept, Author, Paper, etc.) - validated against allowlist
         properties: Node properties
 
     Returns:
         Created node data, or None if neo4j not available
+
+    Raises:
+        Neo4jValidationError: If node_type is invalid
     """
     if session is None:
         return None
 
+    # Validate node type to prevent Cypher injection
+    validated_type = validate_node_type(node_type)
+
     query = f"""
-    CREATE (n:{node_type} $props)
+    CREATE (n:{validated_type} $props)
     RETURN n, elementId(n) as id
     """
     result = await session.run(query, props=properties)
@@ -200,20 +314,26 @@ async def create_relationship(
         session: Neo4j session
         source_id: Source node element ID
         target_id: Target node element ID
-        rel_type: Relationship type (EXPLAINS, CITES, etc.)
+        rel_type: Relationship type (EXPLAINS, CITES, etc.) - validated against allowlist
         properties: Optional relationship properties
 
     Returns:
         Created relationship data, or None if neo4j not available
+
+    Raises:
+        Neo4jValidationError: If rel_type is invalid
     """
     if session is None:
         return None
+
+    # Validate relationship type to prevent Cypher injection
+    validated_type = validate_relationship_type(rel_type)
 
     props = properties or {}
     query = f"""
     MATCH (a), (b)
     WHERE elementId(a) = $source_id AND elementId(b) = $target_id
-    CREATE (a)-[r:{rel_type} $props]->(b)
+    CREATE (a)-[r:{validated_type} $props]->(b)
     RETURN r, elementId(r) as id
     """
     result = await session.run(
@@ -267,15 +387,22 @@ async def search_nodes(
 
     Args:
         session: Neo4j session
-        label: Optional node label filter
+        label: Optional node label filter (validated against allowlist)
         properties: Optional property filters
         limit: Maximum results
 
     Returns:
         List of matching nodes, or empty list if neo4j not available
+
+    Raises:
+        Neo4jValidationError: If label is invalid
     """
     if session is None:
         return []
+
+    # Validate label if provided
+    if label:
+        validate_node_type(label)
 
     label_clause = f":{label}" if label else ""
     where_clauses = []
@@ -320,16 +447,24 @@ async def traverse_graph(
     Args:
         session: Neo4j session
         start_node_id: Starting node element ID
-        relationship_types: Optional filter for relationship types
+        relationship_types: Optional filter for relationship types (validated)
         direction: OUTGOING, INCOMING, or BOTH
         max_depth: Maximum traversal depth
         limit: Maximum results
 
     Returns:
         List of paths/nodes found, or empty list if neo4j not available
+
+    Raises:
+        Neo4jValidationError: If any relationship type is invalid
     """
     if session is None:
         return []
+
+    # Validate relationship types if provided
+    if relationship_types:
+        for rt in relationship_types:
+            validate_relationship_type(rt)
 
     rel_filter = "|".join(relationship_types) if relationship_types else ""
     rel_pattern = (
@@ -417,6 +552,6 @@ async def create_indexes() -> None:
         for index_query in indexes:
             try:
                 await session.run(index_query)
-            except Exception:
-                # Index might already exist
-                pass
+            except Exception as e:
+                # Log but don't fail - index might already exist or be in progress
+                logger.debug(f"Index creation note: {e}")

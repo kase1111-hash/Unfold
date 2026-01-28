@@ -1,11 +1,9 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
 import type {
   ApiError,
-  AuthResponse,
   Document,
   GraphNode,
   PaginatedResponse,
-  Token,
   User,
   CitationTree,
   CitationNode,
@@ -17,10 +15,24 @@ import type {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
+// New auth response type (refresh token is in httpOnly cookie)
+interface AuthResponse {
+  user: User;
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+// Access token response for refresh
+interface AccessTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
 class ApiClient {
   private client: AxiosInstance;
   private accessToken: string | null = null;
-  private refreshToken: string | null = null;
 
   constructor() {
     this.client = axios.create({
@@ -28,6 +40,8 @@ class ApiClient {
       headers: {
         "Content-Type": "application/json",
       },
+      // Enable cookies for cross-origin requests (needed for httpOnly refresh token)
+      withCredentials: true,
     });
 
     // Request interceptor to add auth token
@@ -49,21 +63,23 @@ class ApiClient {
           _retry?: boolean;
         };
 
-        // If 401 and we have refresh token, try to refresh
+        // If 401 and not already retrying, try to refresh
         if (
           error.response?.status === 401 &&
-          this.refreshToken &&
-          !originalRequest._retry
+          !originalRequest._retry &&
+          originalRequest.url !== "/auth/refresh" &&
+          originalRequest.url !== "/auth/login"
         ) {
           originalRequest._retry = true;
 
           try {
-            const tokens = await this.refreshTokens();
-            this.setTokens(tokens);
+            // Refresh token is sent automatically via httpOnly cookie
+            const newToken = await this.refreshTokens();
+            this.setAccessToken(newToken.access_token);
 
             // Retry original request
             if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${tokens.access_token}`;
+              originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
             }
             return this.client(originalRequest);
           } catch (refreshError) {
@@ -77,36 +93,31 @@ class ApiClient {
       }
     );
 
-    // Load tokens from localStorage on init
+    // Load access token from localStorage on init
     if (typeof window !== "undefined") {
-      this.loadTokensFromStorage();
+      this.loadAccessTokenFromStorage();
     }
   }
 
-  // Token management
-  setTokens(tokens: Token) {
-    this.accessToken = tokens.access_token;
-    this.refreshToken = tokens.refresh_token;
+  // Token management - only access token in localStorage now
+  setAccessToken(token: string) {
+    this.accessToken = token;
 
     if (typeof window !== "undefined") {
-      localStorage.setItem("access_token", tokens.access_token);
-      localStorage.setItem("refresh_token", tokens.refresh_token);
+      localStorage.setItem("access_token", token);
     }
   }
 
   clearTokens() {
     this.accessToken = null;
-    this.refreshToken = null;
 
     if (typeof window !== "undefined") {
       localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
     }
   }
 
-  private loadTokensFromStorage() {
+  private loadAccessTokenFromStorage() {
     this.accessToken = localStorage.getItem("access_token");
-    this.refreshToken = localStorage.getItem("refresh_token");
   }
 
   isAuthenticated(): boolean {
@@ -119,34 +130,41 @@ class ApiClient {
     username: string,
     password: string,
     fullName?: string
-  ): Promise<AuthResponse> {
+  ): Promise<{ user: User }> {
     const response = await this.client.post<AuthResponse>("/auth/register", {
       email,
       username,
       password,
       full_name: fullName,
     });
-    this.setTokens(response.data.tokens);
-    return response.data;
+    // Refresh token is automatically set as httpOnly cookie by the server
+    this.setAccessToken(response.data.access_token);
+    return { user: response.data.user };
   }
 
-  async login(email: string, password: string): Promise<AuthResponse> {
+  async login(email: string, password: string): Promise<{ user: User }> {
     const response = await this.client.post<AuthResponse>("/auth/login", {
       email,
       password,
     });
-    this.setTokens(response.data.tokens);
-    return response.data;
+    // Refresh token is automatically set as httpOnly cookie by the server
+    this.setAccessToken(response.data.access_token);
+    return { user: response.data.user };
   }
 
   async logout(): Promise<void> {
+    try {
+      // Tell server to clear the refresh token cookie
+      await this.client.post("/auth/logout");
+    } catch {
+      // Ignore errors, still clear local tokens
+    }
     this.clearTokens();
   }
 
-  async refreshTokens(): Promise<Token> {
-    const response = await this.client.post<Token>("/auth/refresh", {
-      refresh_token: this.refreshToken,
-    });
+  async refreshTokens(): Promise<AccessTokenResponse> {
+    // Refresh token is sent automatically via httpOnly cookie
+    const response = await this.client.post<AccessTokenResponse>("/auth/refresh", {});
     return response.data;
   }
 
@@ -556,8 +574,8 @@ export const api = new ApiClient();
 // Helper to extract error message
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const apiError = error.response?.data as { error?: ApiError } | undefined;
-    return apiError?.error?.message || error.message;
+    const apiError = error.response?.data as { detail?: { message?: string } } | undefined;
+    return apiError?.detail?.message || error.message;
   }
   if (error instanceof Error) {
     return error.message;

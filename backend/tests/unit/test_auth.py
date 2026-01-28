@@ -168,8 +168,13 @@ class TestJWTTokens:
 class TestAuthEndpoints:
     """Tests for authentication API endpoints."""
 
+    @pytest.mark.integration
     def test_register_success(self, client, api_prefix):
-        """Test successful user registration."""
+        """Test successful user registration.
+
+        This test requires a database connection to fully pass.
+        Run with: pytest -m integration
+        """
         response = client.post(
             f"{api_prefix}/auth/register",
             json={
@@ -180,8 +185,12 @@ class TestAuthEndpoints:
             },
         )
 
-        # May fail without DB, but tests endpoint structure
-        assert response.status_code in [201, 500]
+        # Should return 201 on success
+        # 500 indicates a configuration/infrastructure issue that should be investigated
+        assert response.status_code == 201, (
+            f"Registration failed with status {response.status_code}. "
+            f"Response: {response.json() if response.status_code != 500 else 'Server Error'}"
+        )
 
     def test_register_invalid_email(self, client, api_prefix):
         """Test registration with invalid email."""
