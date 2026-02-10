@@ -1,4 +1,4 @@
-"""Vector store connection for embeddings (FAISS and Pinecone)."""
+"""Vector store connection for embeddings (FAISS)."""
 
 import json
 from pathlib import Path
@@ -236,174 +236,6 @@ async def check_faiss_connection() -> dict[str, str | bool]:
         }
 
 
-# ============================================================================
-# Pinecone Cloud Vector Store
-# ============================================================================
-
-_pinecone_index: Any = None
-
-
-async def init_pinecone() -> Any:
-    """Initialize Pinecone connection.
-
-    Returns:
-        Pinecone index instance
-    """
-    global _pinecone_index
-
-    if _pinecone_index is not None:
-        return _pinecone_index
-
-    if not settings.pinecone_api_key:
-        raise ValueError("PINECONE_API_KEY not configured")
-
-    try:
-        from pinecone import Pinecone
-    except ImportError:
-        raise ImportError("Pinecone not installed. Run: pip install pinecone-client")
-
-    pc = Pinecone(api_key=settings.pinecone_api_key)
-    _pinecone_index = pc.Index(settings.pinecone_index_name)
-
-    return _pinecone_index
-
-
-async def close_pinecone() -> None:
-    """Close Pinecone connection."""
-    global _pinecone_index
-    _pinecone_index = None
-
-
-async def pinecone_upsert(
-    vectors: list[dict[str, Any]],
-    namespace: str = "",
-) -> dict[str, int]:
-    """Upsert vectors to Pinecone.
-
-    Args:
-        vectors: List of dicts with id, values, and metadata
-        namespace: Optional namespace for organization
-
-    Returns:
-        Upsert statistics
-    """
-    global _pinecone_index
-
-    if _pinecone_index is None:
-        await init_pinecone()
-
-    response = _pinecone_index.upsert(vectors=vectors, namespace=namespace)
-    return {"upserted_count": response.upserted_count}
-
-
-async def pinecone_query(
-    vector: list[float],
-    top_k: int = 10,
-    namespace: str = "",
-    filter: dict | None = None,
-    include_metadata: bool = True,
-) -> list[dict[str, Any]]:
-    """Query Pinecone for similar vectors.
-
-    Args:
-        vector: Query embedding vector
-        top_k: Number of results
-        namespace: Optional namespace
-        filter: Optional metadata filter
-        include_metadata: Whether to include metadata
-
-    Returns:
-        List of matches
-    """
-    global _pinecone_index
-
-    if _pinecone_index is None:
-        await init_pinecone()
-
-    response = _pinecone_index.query(
-        vector=vector,
-        top_k=top_k,
-        namespace=namespace,
-        filter=filter,
-        include_metadata=include_metadata,
-    )
-
-    return [
-        {
-            "id": match.id,
-            "score": match.score,
-            "metadata": match.metadata if include_metadata else {},
-        }
-        for match in response.matches
-    ]
-
-
-async def pinecone_delete(
-    ids: list[str] | None = None,
-    delete_all: bool = False,
-    namespace: str = "",
-    filter: dict | None = None,
-) -> None:
-    """Delete vectors from Pinecone.
-
-    Args:
-        ids: List of vector IDs to delete
-        delete_all: Delete all vectors in namespace
-        namespace: Optional namespace
-        filter: Optional metadata filter
-    """
-    global _pinecone_index
-
-    if _pinecone_index is None:
-        await init_pinecone()
-
-    _pinecone_index.delete(
-        ids=ids,
-        delete_all=delete_all,
-        namespace=namespace,
-        filter=filter,
-    )
-
-
-async def check_pinecone_connection() -> dict[str, str | bool]:
-    """Check Pinecone connectivity for health checks.
-
-    Returns:
-        Dict with connection status
-    """
-    global _pinecone_index
-
-    try:
-        if not settings.pinecone_api_key:
-            return {
-                "connected": False,
-                "status": "not_configured",
-                "message": "Pinecone API key not set",
-            }
-
-        if _pinecone_index is None:
-            return {
-                "connected": False,
-                "status": "not_initialized",
-                "message": "Pinecone index not initialized",
-            }
-
-        # Get index stats to verify connection
-        stats = _pinecone_index.describe_index_stats()
-
-        return {
-            "connected": True,
-            "status": "healthy",
-            "message": "Pinecone connection successful",
-            "vector_count": stats.total_vector_count,
-        }
-    except Exception as e:
-        return {
-            "connected": False,
-            "status": "error",
-            "message": str(e),
-        }
-
 
 # ============================================================================
 # Unified Vector Store Interface
@@ -411,25 +243,11 @@ async def check_pinecone_connection() -> dict[str, str | bool]:
 
 
 class VectorStore:
-    """Unified interface for vector operations.
-
-    Supports both FAISS (local) and Pinecone (cloud) backends.
-    """
-
-    def __init__(self, backend: str = "faiss"):
-        """Initialize vector store.
-
-        Args:
-            backend: "faiss" or "pinecone"
-        """
-        self.backend = backend
+    """Interface for vector operations using FAISS."""
 
     async def initialize(self) -> None:
         """Initialize the vector store backend."""
-        if self.backend == "faiss":
-            await init_faiss()
-        else:
-            await init_pinecone()
+        await init_faiss()
 
     async def add(
         self,
@@ -438,14 +256,7 @@ class VectorStore:
         metadata: list[dict] | None = None,
     ) -> None:
         """Add vectors to the store."""
-        if self.backend == "faiss":
-            await faiss_add_vectors(vectors, ids, metadata)
-        else:
-            vector_data = [
-                {"id": id_, "values": vec, "metadata": meta or {}}
-                for id_, vec, meta in zip(ids, vectors, metadata or [{}] * len(ids))
-            ]
-            await pinecone_upsert(vector_data)
+        await faiss_add_vectors(vectors, ids, metadata)
 
     async def search(
         self,
@@ -454,21 +265,12 @@ class VectorStore:
         filter: dict | None = None,
     ) -> list[dict[str, Any]]:
         """Search for similar vectors."""
-        if self.backend == "faiss":
-            return await faiss_search(query_vector, k, filter)
-        else:
-            return await pinecone_query(query_vector, k, filter=filter)
+        return await faiss_search(query_vector, k, filter)
 
     async def delete(self, ids: list[str]) -> None:
         """Delete vectors by ID."""
-        if self.backend == "faiss":
-            await faiss_delete(ids)
-        else:
-            await pinecone_delete(ids=ids)
+        await faiss_delete(ids)
 
     async def health_check(self) -> dict[str, str | bool]:
         """Check vector store health."""
-        if self.backend == "faiss":
-            return await check_faiss_connection()
-        else:
-            return await check_pinecone_connection()
+        return await check_faiss_connection()

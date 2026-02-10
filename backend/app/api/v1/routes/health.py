@@ -53,7 +53,7 @@ async def detailed_health_check() -> DetailedHealthStatus:
     Checks connectivity to:
     - PostgreSQL database
     - Neo4j graph database
-    - Vector store (Pinecone/FAISS)
+    - Vector store (FAISS)
     - External APIs
     """
     services = {}

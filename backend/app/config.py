@@ -47,11 +47,6 @@ class Settings(BaseSettings):
     # In production, NEO4J_PASSWORD must be explicitly set
     neo4j_password: str | None = Field(default=None)
 
-    # Vector Store - Pinecone
-    pinecone_api_key: str | None = None
-    pinecone_environment: str | None = None
-    pinecone_index_name: str = "unfold-embeddings"
-
     # AI Models - OpenAI
     openai_api_key: str | None = None
     openai_embedding_model: str = "text-embedding-3-large"
