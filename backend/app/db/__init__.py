@@ -3,7 +3,7 @@
 This module provides a unified interface for all database connections:
 - PostgreSQL (via SQLAlchemy async)
 - Neo4j (graph database)
-- Vector Store (FAISS local or Pinecone cloud)
+- Vector Store (FAISS)
 """
 
 from app.db.neo4j import (
@@ -35,17 +35,11 @@ from app.db.postgres import (
 from app.db.vector import (
     VectorStore,
     check_faiss_connection,
-    check_pinecone_connection,
     close_faiss,
-    close_pinecone,
     faiss_add_vectors,
     faiss_delete,
     faiss_search,
     init_faiss,
-    init_pinecone,
-    pinecone_delete,
-    pinecone_query,
-    pinecone_upsert,
     save_faiss_index,
 )
 from app.db.query_utils import (
@@ -93,14 +87,6 @@ __all__ = [
     "faiss_search",
     "faiss_delete",
     "check_faiss_connection",
-    # Vector Store - Pinecone
-    "init_pinecone",
-    "close_pinecone",
-    "pinecone_upsert",
-    "pinecone_query",
-    "pinecone_delete",
-    "check_pinecone_connection",
-    # Unified Vector Store
     "VectorStore",
     # Query Utilities
     "PaginationParams",
@@ -153,7 +139,6 @@ async def close_all_databases() -> None:
     await close_postgres()
     await close_neo4j()
     await close_faiss()
-    await close_pinecone()
 
     # Close Redis cache
     try:

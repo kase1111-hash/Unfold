@@ -286,7 +286,6 @@ class RedisCacheManager:
         "api_responses": 300,  # 5 minutes
         "user_sessions": 3600,  # 1 hour
         "citations": 3600,  # 1 hour
-        "ethics": 600,  # 10 minutes
         "rate_limit": 60,  # 1 minute
         "search": 900,  # 15 minutes
     }

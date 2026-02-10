@@ -234,7 +234,6 @@ class CacheManager:
         "api_responses": {"max_size": 500, "ttl": 300},  # 5 min
         "user_sessions": {"max_size": 1000, "ttl": 3600},
         "citations": {"max_size": 500, "ttl": 3600},
-        "ethics": {"max_size": 200, "ttl": 600},  # 10 min
     }
 
     def __init__(self):

@@ -266,10 +266,7 @@ class DocumentService:
         Returns:
             Tuple of (text_content, metadata)
         """
-        # EPUB extraction would require ebooklib
-        # For now, return empty content
-        logger.warning("EPUB extraction not implemented")
-        return "", {}
+        raise ValueError("EPUB format is not supported. Please upload a PDF file.")
 
     async def get_document(self, doc_id: str) -> Document | None:
         """Get document by ID.
