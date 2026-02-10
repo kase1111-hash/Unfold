@@ -469,6 +469,57 @@ class KnowledgeGraphBuilder:
 
         return nodes
 
+    async def get_document_relations(
+        self,
+        doc_id: str,
+        limit: int = 500,
+    ) -> list[GraphRelation]:
+        """Get all relations between nodes belonging to a document.
+
+        Args:
+            doc_id: Document ID to get relations for
+            limit: Maximum relations to return
+
+        Returns:
+            List of GraphRelation objects
+        """
+        async with get_neo4j_session_context() as session:
+            if session is None:
+                return []
+
+            query = """
+            MATCH (a)-[r]->(b)
+            WHERE a.source_doc_id = $doc_id AND b.source_doc_id = $doc_id
+            RETURN a.node_id AS source_node_id,
+                   b.node_id AS target_node_id,
+                   type(r) AS relation_type,
+                   r.relation_id AS relation_id,
+                   r.weight AS weight
+            LIMIT $limit
+            """
+            result = await session.run(query, doc_id=doc_id, limit=limit)
+            records = await result.data()
+
+        relations = []
+        for record in records:
+            rel_type_str = record.get("relation_type", "RELATED_TO")
+            try:
+                rel_type = RelationType(rel_type_str)
+            except ValueError:
+                rel_type = RelationType.RELATED_TO
+
+            relations.append(
+                GraphRelation(
+                    relation_id=record.get("relation_id", f"rel_{uuid4().hex[:12]}"),
+                    source_node_id=record["source_node_id"],
+                    target_node_id=record["target_node_id"],
+                    type=rel_type,
+                    weight=record.get("weight", 1.0) or 1.0,
+                )
+            )
+
+        return relations
+
     async def delete_document_nodes(self, doc_id: str) -> int:
         """Delete all nodes associated with a document.
 

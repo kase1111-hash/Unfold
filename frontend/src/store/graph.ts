@@ -47,8 +47,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   loadGraphForDocument: async (docId: string) => {
     set({ isLoading: true, error: null });
     try {
-      const result = await api.searchNodes({ sourceDocId: docId, limit: 100 });
-      const nodes: GraphVisualizationNode[] = result.nodes.map((node) => ({
+      const [nodesResult, relationsResult] = await Promise.all([
+        api.searchNodes({ sourceDocId: docId, limit: 100 }),
+        api.getDocumentRelations(docId),
+      ]);
+
+      const nodes: GraphVisualizationNode[] = nodesResult.nodes.map((node) => ({
         ...node,
         x: undefined,
         y: undefined,
@@ -56,9 +60,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
         fy: null,
       }));
 
-      // For now, we'll create links based on related nodes
-      // In a full implementation, we'd fetch relations from the backend
-      const links: GraphVisualizationLink[] = [];
+      const nodeIds = new Set(nodes.map((n) => n.node_id));
+      const links: GraphVisualizationLink[] = relationsResult.relations
+        .filter((r) => nodeIds.has(r.source_node_id) && nodeIds.has(r.target_node_id))
+        .map((r) => ({
+          source: r.source_node_id,
+          target: r.target_node_id,
+          type: r.type as GraphVisualizationLink["type"],
+          weight: r.weight,
+        }));
 
       set({
         nodes,
