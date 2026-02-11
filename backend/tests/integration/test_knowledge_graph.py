@@ -10,24 +10,17 @@ from fastapi.testclient import TestClient
 class TestGraphNodeOperations:
     """Test graph node CRUD operations."""
 
-    def test_search_nodes_empty_query(self, client: TestClient, api_prefix: str):
-        """Test node search with empty query."""
-        response = client.get(f"{api_prefix}/graph/nodes")
-        # Should return nodes or empty list
-        assert response.status_code in [200, 422]
-
-    def test_search_nodes_with_query(self, client: TestClient, api_prefix: str):
-        """Test node search with valid query."""
+    def test_search_nodes_returns_list(self, client: TestClient, api_prefix: str):
+        """Test node search returns a list."""
         response = client.get(f"{api_prefix}/graph/nodes?query=quantum")
         assert response.status_code == 200
         data = response.json()
-        # Should return list of nodes
         assert isinstance(data, (list, dict))
 
     def test_search_nodes_with_type_filter(self, client: TestClient, api_prefix: str):
         """Test node search filtered by type."""
         response = client.get(f"{api_prefix}/graph/nodes?query=test&node_type=Concept")
-        assert response.status_code in [200, 422]
+        assert response.status_code == 200
 
     def test_search_nodes_pagination(self, client: TestClient, api_prefix: str):
         """Test node search with pagination."""
@@ -35,7 +28,7 @@ class TestGraphNodeOperations:
         assert response.status_code == 200
 
     def test_get_nonexistent_node(self, client: TestClient, api_prefix: str):
-        """Test getting a node that doesn't exist."""
+        """Test getting a node that doesn't exist returns 404."""
         response = client.get(f"{api_prefix}/graph/nodes/nonexistent_node_id")
         assert response.status_code == 404
 
@@ -65,8 +58,7 @@ class TestGraphNodeOperations:
             json=node_data,
             headers=auth_headers,
         )
-        # Should succeed or fail gracefully
-        assert response.status_code in [200, 201, 401, 422]
+        assert response.status_code in [200, 201]
 
 
 class TestGraphRelationOperations:
@@ -83,13 +75,13 @@ class TestGraphRelationOperations:
         response = client.post(f"{api_prefix}/graph/relations", json=relation_data)
         assert response.status_code == 401
 
-    def test_create_relation_with_auth(
+    def test_create_relation_nonexistent_nodes(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test creating a relation with authentication."""
+        """Test creating a relation between nonexistent nodes returns 404."""
         relation_data = {
-            "source_node_id": "node_1",
-            "target_node_id": "node_2",
+            "source_node_id": "node_does_not_exist_1",
+            "target_node_id": "node_does_not_exist_2",
             "type": "EXPLAINS",
             "weight": 0.8,
         }
@@ -98,8 +90,7 @@ class TestGraphRelationOperations:
             json=relation_data,
             headers=auth_headers,
         )
-        # Should succeed or return 404 if nodes don't exist
-        assert response.status_code in [200, 201, 401, 404, 422]
+        assert response.status_code == 404
 
     def test_invalid_relation_type_rejected(
         self, client: TestClient, api_prefix: str, auth_headers: dict
@@ -116,8 +107,7 @@ class TestGraphRelationOperations:
             json=relation_data,
             headers=auth_headers,
         )
-        # Should reject invalid type
-        assert response.status_code in [400, 401, 422]
+        assert response.status_code == 422
 
 
 class TestGraphTraversal:
@@ -126,23 +116,22 @@ class TestGraphTraversal:
     def test_traverse_from_nonexistent_node(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test traversal from a node that doesn't exist."""
+        """Test traversal from a node that doesn't exist returns 404."""
         response = client.get(
             f"{api_prefix}/graph/nodes/nonexistent_node/related?max_depth=2",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
-    def test_traverse_depth_limits(
+    def test_traverse_excessive_depth_rejected(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test that traversal depth is properly limited."""
-        # Very deep traversal should be rejected or limited (max is 5)
+        """Test that traversal depth > 5 is rejected."""
         response = client.get(
             f"{api_prefix}/graph/nodes/test_node/related?max_depth=10",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 400, 401, 404, 422]
+        assert response.status_code == 422
 
 
 class TestGraphBuildFromDocument:
@@ -176,27 +165,21 @@ class TestGraphBuildFromDocument:
             json=build_data,
             headers=auth_headers,
         )
-        # Should succeed or return error if graph service unavailable
-        assert response.status_code in [200, 201, 401, 422, 500]
+        assert response.status_code in [200, 201]
 
 
 class TestExternalKnowledgeLinking:
     """Test external knowledge linking (Wikipedia, Semantic Scholar)."""
 
     def test_wikipedia_link_endpoint(self, client: TestClient, api_prefix: str):
-        """Test Wikipedia linking endpoint."""
+        """Test Wikipedia linking endpoint returns data."""
         response = client.get(f"{api_prefix}/graph/link/wikipedia/quantum")
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, (list, dict))
 
-    def test_wikipedia_link_empty_query(self, client: TestClient, api_prefix: str):
-        """Test Wikipedia linking with empty entity."""
-        response = client.get(f"{api_prefix}/graph/link/wikipedia/test")
-        assert response.status_code in [200, 422]
-
     def test_semantic_scholar_search(self, client: TestClient, api_prefix: str):
-        """Test Semantic Scholar paper search."""
+        """Test Semantic Scholar paper search returns 200."""
         response = client.get(f"{api_prefix}/graph/link/papers?query=machine+learning")
         assert response.status_code == 200
 
@@ -205,12 +188,12 @@ class TestExternalKnowledgeLinking:
     ):
         """Test Semantic Scholar search with limit."""
         response = client.get(f"{api_prefix}/graph/link/papers?query=quantum&limit=5")
-        assert response.status_code in [200, 422]
+        assert response.status_code == 200
 
-    def test_semantic_scholar_invalid_limit(self, client: TestClient, api_prefix: str):
-        """Test Semantic Scholar search with invalid limit."""
-        response = client.get(f"{api_prefix}/graph/link/papers?query=test&limit=-1")
-        assert response.status_code in [200, 400, 422]
+    def test_semantic_scholar_missing_query(self, client: TestClient, api_prefix: str):
+        """Test Semantic Scholar search without query is rejected."""
+        response = client.get(f"{api_prefix}/graph/link/papers")
+        assert response.status_code == 422
 
 
 class TestEntityExtraction:
@@ -223,10 +206,8 @@ class TestEntityExtraction:
         try:
             extractor = EntityExtractor()
             entities = extractor.extract_entities(sample_document_content)
-            # Should return a list of entities
             assert isinstance(entities, list)
         except Exception:
-            # SpaCy model may not be installed
             pytest.skip("SpaCy model not available")
 
     def test_extract_entities_empty_text(self):
@@ -247,26 +228,29 @@ class TestGraphVisualization:
     def test_get_visualization_data(
         self, client: TestClient, api_prefix: str, mock_document_id: str
     ):
-        """Test getting visualization data for a document's graph."""
+        """Test getting visualization data for a nonexistent document returns 404."""
         response = client.get(f"{api_prefix}/graph/visualize/{mock_document_id}")
-        # Should return visualization data or 404
-        assert response.status_code in [200, 404]
-        if response.status_code == 200:
-            data = response.json()
-            # Should have nodes and edges/links
-            assert "nodes" in data or "data" in data
+        assert response.status_code == 404
 
 
 class TestGraphEmbeddings:
     """Test graph embedding operations."""
 
-    def test_similarity_search(
+    def test_similarity_search_requires_auth(
+        self, client: TestClient, api_prefix: str
+    ):
+        """Test vector similarity search requires authentication."""
+        response = client.get(
+            f"{api_prefix}/graph/similar?query=quantum+computing&limit=5",
+        )
+        assert response.status_code == 401
+
+    def test_similarity_search_with_auth(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test vector similarity search."""
+        """Test vector similarity search returns results."""
         response = client.get(
             f"{api_prefix}/graph/similar?query=quantum+computing&limit=5",
             headers=auth_headers,
         )
-        # Should return similar nodes or empty list
-        assert response.status_code in [200, 401]
+        assert response.status_code == 200

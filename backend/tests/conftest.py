@@ -69,8 +69,8 @@ def auth_headers(client: TestClient, api_prefix: str) -> dict:
     """
     Get authentication headers for protected endpoints.
     Creates a test user and returns valid JWT tokens.
+    Raises if auth setup fails so tests don't silently run unauthenticated.
     """
-    # Register a test user
     register_data = {
         "email": f"test_{uuid.uuid4().hex[:8]}@example.com",
         "username": f"testuser_{uuid.uuid4().hex[:8]}",
@@ -80,8 +80,14 @@ def auth_headers(client: TestClient, api_prefix: str) -> dict:
 
     response = client.post(f"{api_prefix}/auth/register", json=register_data)
 
-    # If registration fails (user exists), try login
-    if response.status_code != 201:
+    if response.status_code == 201:
+        data = response.json()
+        token = data.get("access_token")
+        assert token, "Register succeeded but no access_token in response"
+        return {"Authorization": f"Bearer {token}"}
+
+    # Registration may fail with 409 if user exists; try login
+    if response.status_code == 409:
         login_data = {
             "username": register_data["email"],
             "password": register_data["password"],
@@ -91,15 +97,17 @@ def auth_headers(client: TestClient, api_prefix: str) -> dict:
             data=login_data,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-
-    if response.status_code in [200, 201]:
+        assert response.status_code == 200, (
+            f"Login failed with status {response.status_code}: {response.text}"
+        )
         data = response.json()
-        token = data.get("tokens", {}).get("access_token") or data.get("access_token")
-        if token:
-            return {"Authorization": f"Bearer {token}"}
+        token = data.get("access_token")
+        assert token, "Login succeeded but no access_token in response"
+        return {"Authorization": f"Bearer {token}"}
 
-    # Return empty headers if auth fails (some tests may not need auth)
-    return {}
+    pytest.fail(
+        f"Auth setup failed: register returned {response.status_code}: {response.text}"
+    )
 
 
 @pytest.fixture
@@ -122,27 +130,6 @@ def sample_annotation() -> dict:
         "annotation_type": "highlight",
         "visibility": "private",
         "tags": ["important", "quantum"],
-    }
-
-
-@pytest.fixture
-def sample_bias_content() -> str:
-    """Sample content with potential bias for testing."""
-    return """
-    The chairman announced the new policy today.
-    Mankind has always sought to understand the universe.
-    The crazy deadline forced the team to work overtime.
-    """
-
-
-@pytest.fixture
-def sample_consent_request() -> dict:
-    """Sample consent request for testing."""
-    return {
-        "consent_type": "analytics",
-        "granted": True,
-        "ip_address": "192.168.1.1",
-        "user_agent": "Mozilla/5.0 Test Browser",
     }
 
 

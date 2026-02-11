@@ -17,16 +17,14 @@ class TestFlashcardOperations:
     def test_get_flashcards_with_auth(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test getting flashcards with authentication."""
+        """Test getting flashcards with authentication returns list."""
         response = client.get(
             f"{api_prefix}/learning/flashcards",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401]
-        if response.status_code == 200:
-            data = response.json()
-            # Should return list of flashcards
-            assert isinstance(data, (list, dict))
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, (list, dict))
 
     def test_get_flashcards_due_today(
         self, client: TestClient, api_prefix: str, auth_headers: dict
@@ -36,7 +34,7 @@ class TestFlashcardOperations:
             f"{api_prefix}/learning/flashcards/due",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 200
 
     def test_get_flashcards_by_document(
         self,
@@ -45,12 +43,12 @@ class TestFlashcardOperations:
         auth_headers: dict,
         mock_document_id: str,
     ):
-        """Test getting flashcards for a specific document."""
+        """Test getting flashcards for a specific document returns 200."""
         response = client.get(
             f"{api_prefix}/learning/flashcards?document_id={mock_document_id}",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401]
+        assert response.status_code == 200
 
     def test_create_flashcard_requires_auth(
         self, client: TestClient, api_prefix: str, sample_flashcard: dict
@@ -80,7 +78,7 @@ class TestFlashcardOperations:
             json=flashcard_data,
             headers=auth_headers,
         )
-        assert response.status_code in [200, 201, 401, 422]
+        assert response.status_code in [200, 201]
 
     def test_review_flashcard_requires_auth(self, client: TestClient, api_prefix: str):
         """Test that reviewing a flashcard requires authentication."""
@@ -91,30 +89,29 @@ class TestFlashcardOperations:
         )
         assert response.status_code == 401
 
-    def test_review_flashcard_with_auth(
+    def test_review_nonexistent_flashcard(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test reviewing a flashcard with valid rating."""
-        review_data = {"quality": 4}  # 0-5 scale
+        """Test reviewing a nonexistent flashcard returns 404."""
+        review_data = {"quality": 4}
         response = client.post(
             f"{api_prefix}/learning/flashcards/card_123/review",
             json=review_data,
             headers=auth_headers,
         )
-        # Should succeed or return 404 if card doesn't exist
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
     def test_review_flashcard_invalid_quality(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test reviewing with invalid quality rating."""
+        """Test reviewing with invalid quality rating is rejected."""
         review_data = {"quality": 10}  # Invalid: should be 0-5
         response = client.post(
             f"{api_prefix}/learning/flashcards/card_123/review",
             json=review_data,
             headers=auth_headers,
         )
-        assert response.status_code in [400, 401, 404, 422]
+        assert response.status_code == 422
 
 
 class TestSM2Algorithm:
@@ -127,7 +124,6 @@ class TestSM2Algorithm:
         scheduler = SM2Scheduler()
         card_id = "test_card_1"
 
-        # Add card and review with quality 4
         scheduler.add_card(card_id)
         state = scheduler.review_card(card_id, ResponseQuality.CORRECT_HESITATION)
 
@@ -142,16 +138,13 @@ class TestSM2Algorithm:
         scheduler = SM2Scheduler()
         card_id = "test_card_2"
 
-        # First review with quality 5
         scheduler.add_card(card_id)
         state1 = scheduler.review_card(card_id, ResponseQuality.PERFECT)
         interval1 = state1.interval
 
-        # Second review with quality 5
         state2 = scheduler.review_card(card_id, ResponseQuality.PERFECT)
         interval2 = state2.interval
 
-        # Interval should increase
         assert interval2 >= interval1
 
     def test_sm2_quality_0_resets(self):
@@ -161,17 +154,14 @@ class TestSM2Algorithm:
         scheduler = SM2Scheduler()
         card_id = "test_card_3"
 
-        # Build up some repetitions
         scheduler.add_card(card_id)
         scheduler.review_card(card_id, ResponseQuality.PERFECT)
         scheduler.review_card(card_id, ResponseQuality.PERFECT)
 
-        # Now fail with quality 0
         state = scheduler.review_card(card_id, ResponseQuality.BLACKOUT)
 
-        # Should reset interval and repetitions
-        assert state.interval == 1  # Reset to 1 day
-        assert state.repetitions == 0  # Reset repetitions
+        assert state.interval == 1
+        assert state.repetitions == 0
 
 
 class TestEngagementTracking:
@@ -208,21 +198,21 @@ class TestEngagementTracking:
             json=engagement_data,
             headers=auth_headers,
         )
-        assert response.status_code in [200, 201, 401, 422]
+        assert response.status_code in [200, 201]
 
-    def test_get_engagement_stats(
+    def test_get_engagement_stats_nonexistent_doc(
         self,
         client: TestClient,
         api_prefix: str,
         auth_headers: dict,
         mock_document_id: str,
     ):
-        """Test getting engagement statistics."""
+        """Test getting engagement stats for nonexistent document returns 404."""
         response = client.get(
             f"{api_prefix}/learning/engagement/{mock_document_id}",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
 
 class TestLearningProgress:
@@ -241,25 +231,23 @@ class TestLearningProgress:
             f"{api_prefix}/learning/progress",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401]
-        if response.status_code == 200:
-            data = response.json()
-            # Should contain progress metrics
-            assert isinstance(data, dict)
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, dict)
 
-    def test_get_progress_by_document(
+    def test_get_progress_nonexistent_document(
         self,
         client: TestClient,
         api_prefix: str,
         auth_headers: dict,
         mock_document_id: str,
     ):
-        """Test getting progress for a specific document."""
+        """Test getting progress for a nonexistent document returns 404."""
         response = client.get(
             f"{api_prefix}/learning/progress/{mock_document_id}",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
 
 class TestLearningExport:
@@ -280,7 +268,7 @@ class TestLearningExport:
             json=export_data,
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 200
 
     def test_export_obsidian_requires_auth(self, client: TestClient, api_prefix: str):
         """Test that Obsidian export requires authentication."""
@@ -297,39 +285,25 @@ class TestLearningExport:
             json=export_data,
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 200
 
 
 class TestFocusMode:
     """Test focus mode and relevance scoring."""
 
-    def test_get_focus_sections(
+    def test_get_focus_sections_nonexistent_doc(
         self,
         client: TestClient,
         api_prefix: str,
         auth_headers: dict,
         mock_document_id: str,
     ):
-        """Test getting focus sections for a document."""
+        """Test getting focus sections for nonexistent document returns 404."""
         response = client.get(
             f"{api_prefix}/learning/focus/{mock_document_id}",
             headers=auth_headers,
         )
-        assert response.status_code in [200, 401, 404]
-
-    def test_get_focus_sections_with_complexity(
-        self,
-        client: TestClient,
-        api_prefix: str,
-        auth_headers: dict,
-        mock_document_id: str,
-    ):
-        """Test getting focus sections with complexity level."""
-        response = client.get(
-            f"{api_prefix}/learning/focus/{mock_document_id}?complexity=50",
-            headers=auth_headers,
-        )
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
 
 class TestFlashcardGeneration:
@@ -344,19 +318,18 @@ class TestFlashcardGeneration:
         )
         assert response.status_code == 401
 
-    def test_generate_flashcards_with_auth(
+    def test_generate_flashcards_nonexistent_doc(
         self,
         client: TestClient,
         api_prefix: str,
         auth_headers: dict,
         mock_document_id: str,
     ):
-        """Test generating flashcards from a document."""
+        """Test generating flashcards from nonexistent document returns 404."""
         gen_data = {"max_cards": 10, "difficulty": "medium"}
         response = client.post(
             f"{api_prefix}/learning/flashcards/generate/{mock_document_id}",
             json=gen_data,
             headers=auth_headers,
         )
-        # Should succeed or return 404 if document doesn't exist
-        assert response.status_code in [200, 202, 401, 404]
+        assert response.status_code == 404

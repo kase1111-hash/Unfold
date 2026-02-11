@@ -205,8 +205,7 @@ class TestGraphAPIEndpoints:
         """Test search nodes endpoint."""
         response = client.get(f"{api_prefix}/graph/nodes")
 
-        # May succeed or fail depending on Neo4j availability
-        assert response.status_code in [200, 500]
+        assert response.status_code == 200
 
     def test_build_graph_requires_auth(self, client, api_prefix):
         """Test build graph endpoint requires authentication."""
@@ -250,8 +249,7 @@ class TestGraphAPIEndpoints:
         """Test Wikipedia linking endpoint."""
         response = client.get(f"{api_prefix}/graph/link/wikipedia/Python")
 
-        # Should work without auth
-        assert response.status_code in [200, 500]  # 500 if network issues
+        assert response.status_code == 200
 
     def test_paper_search_endpoint(self, client, api_prefix):
         """Test paper search endpoint."""
@@ -260,8 +258,7 @@ class TestGraphAPIEndpoints:
             params={"query": "machine learning"},
         )
 
-        # Should work without auth
-        assert response.status_code in [200, 500]  # 500 if network issues
+        assert response.status_code == 200
 
     def test_paper_search_validation(self, client, api_prefix):
         """Test paper search validates query parameter."""
