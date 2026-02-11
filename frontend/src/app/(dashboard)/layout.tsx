@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { useAuthStore } from "@/store";
+import { PageErrorBoundary } from "@/components/ErrorBoundary";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
@@ -114,7 +115,9 @@ export default function DashboardLayout({
 
       {/* Main content */}
       <main className="pl-64">
-        <div className="min-h-screen p-8">{children}</div>
+        <div className="min-h-screen p-8">
+          <PageErrorBoundary>{children}</PageErrorBoundary>
+        </div>
       </main>
     </div>
   );

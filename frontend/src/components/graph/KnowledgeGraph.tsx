@@ -5,7 +5,8 @@ import * as d3 from "d3";
 import { useGraphStore } from "@/store";
 import { cn } from "@/utils/cn";
 import type { GraphVisualizationNode, GraphVisualizationLink, NodeType } from "@/types";
-import { Loader2, ZoomIn, ZoomOut, Maximize2 } from "lucide-react";
+import { Loader2, ZoomIn, ZoomOut, Maximize2, AlertCircle, RefreshCw } from "lucide-react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 interface KnowledgeGraphProps {
   documentId?: string;
@@ -40,6 +41,7 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
     nodes,
     links,
     isLoading,
+    error,
     selectedNodeId,
     hoveredNodeId,
     zoomLevel,
@@ -268,7 +270,35 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
     );
   }
 
+  if (error) {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center h-96 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700",
+          className
+        )}
+      >
+        <div className="flex flex-col items-center gap-3 text-center px-6">
+          <AlertCircle className="w-8 h-8 text-red-500" />
+          <span className="text-slate-600 dark:text-slate-300 text-sm">
+            {error}
+          </span>
+          {documentId && (
+            <button
+              onClick={() => loadGraphForDocument(documentId)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Retry
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
+    <ErrorBoundary>
     <div
       ref={containerRef}
       className={cn(
@@ -366,5 +396,6 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   );
 }

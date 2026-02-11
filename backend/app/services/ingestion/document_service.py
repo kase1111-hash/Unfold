@@ -187,17 +187,21 @@ class DocumentService:
                 DocumentUpdate(authors=metadata["authors"]),
             )
 
-        # Mark as validated
-        await self.repo.update_status(document.doc_id, DocumentStatus.VALIDATED)
-
-        # Create validation record
-        await self.repo.create_validation(
-            doc_id=document.doc_id,
-            is_valid=True,
-            provenance_hash=hashlib.sha256(text_content.encode()).hexdigest()
-            if text_content
-            else None,
-        )
+        # Only mark as VALIDATED if meaningful content was extracted
+        if word_count > 0:
+            await self.repo.update_status(document.doc_id, DocumentStatus.VALIDATED)
+            await self.repo.create_validation(
+                doc_id=document.doc_id,
+                is_valid=True,
+                provenance_hash=hashlib.sha256(text_content.encode()).hexdigest(),
+            )
+        else:
+            await self.repo.update_status(document.doc_id, DocumentStatus.FAILED)
+            await self.repo.create_validation(
+                doc_id=document.doc_id,
+                is_valid=False,
+                validation_errors=["No text content could be extracted from the document"],
+            )
 
         logger.info(
             f"Processed document {document.doc_id}: "
@@ -214,48 +218,61 @@ class DocumentService:
 
         Returns:
             Tuple of (text_content, page_count, metadata)
+
+        Raises:
+            DocumentProcessingError: If the PDF is encrypted or corrupt.
         """
         if not PYPDF_AVAILABLE:
-            logger.warning("pypdf not available, skipping PDF extraction")
-            return "", None, {}
+            raise DocumentProcessingError(
+                "pypdf library is not installed — cannot extract PDF content",
+                code="MISSING_DEPENDENCY",
+            )
 
         try:
             pdf_file = io.BytesIO(file_content)
             reader = pypdf.PdfReader(pdf_file)
-
-            # Extract metadata
-            metadata: dict = {}
-            if reader.metadata:
-                if reader.metadata.title:
-                    metadata["title"] = reader.metadata.title
-                if reader.metadata.author:
-                    # Split multiple authors
-                    authors = reader.metadata.author
-                    if "," in authors:
-                        metadata["authors"] = [a.strip() for a in authors.split(",")]
-                    elif ";" in authors:
-                        metadata["authors"] = [a.strip() for a in authors.split(";")]
-                    else:
-                        metadata["authors"] = [authors]
-
-            # Extract text from each page
-            text_parts = []
-            for page in reader.pages:
-                try:
-                    text = page.extract_text()
-                    if text:
-                        text_parts.append(text)
-                except Exception as e:
-                    logger.warning(f"Failed to extract text from page: {e}")
-
-            text_content = "\n\n".join(text_parts)
-            page_count = len(reader.pages)
-
-            return text_content, page_count, metadata
-
         except Exception as e:
-            logger.error(f"PDF extraction failed: {e}")
-            return "", None, {}
+            raise DocumentProcessingError(
+                f"File appears to be corrupt or is not a valid PDF: {e}",
+                code="CORRUPT_PDF",
+            )
+
+        # Reject encrypted / password-protected PDFs
+        if reader.is_encrypted:
+            raise DocumentProcessingError(
+                "Password-protected PDFs are not supported. "
+                "Please upload an unprotected PDF.",
+                code="ENCRYPTED_PDF",
+            )
+
+        # Extract metadata
+        metadata: dict = {}
+        if reader.metadata:
+            if reader.metadata.title:
+                metadata["title"] = reader.metadata.title
+            if reader.metadata.author:
+                authors = reader.metadata.author
+                if "," in authors:
+                    metadata["authors"] = [a.strip() for a in authors.split(",")]
+                elif ";" in authors:
+                    metadata["authors"] = [a.strip() for a in authors.split(";")]
+                else:
+                    metadata["authors"] = [authors]
+
+        # Extract text from each page
+        text_parts = []
+        for page in reader.pages:
+            try:
+                text = page.extract_text()
+                if text:
+                    text_parts.append(text)
+            except Exception as e:
+                logger.warning(f"Failed to extract text from page: {e}")
+
+        text_content = "\n\n".join(text_parts)
+        page_count = len(reader.pages)
+
+        return text_content, page_count, metadata
 
     def _extract_epub_content(self, file_content: bytes) -> tuple[str, dict]:
         """Extract text content from EPUB.

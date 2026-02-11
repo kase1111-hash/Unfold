@@ -36,10 +36,13 @@ class DetailedHealthStatus(HealthStatus):
 async def health_check() -> HealthStatus:
     """Basic health check endpoint.
 
-    Returns the application health status, version, and environment.
+    Verifies PostgreSQL connectivity and returns overall status.
     """
+    pg_status = await check_postgres_connection()
+    pg_ok = pg_status.get("connected", False)
+
     return HealthStatus(
-        status="healthy",
+        status="healthy" if pg_ok else "degraded",
         timestamp=datetime.now(timezone.utc),
         version=settings.app_version,
         environment=settings.environment,
