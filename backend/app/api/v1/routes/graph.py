@@ -271,6 +271,34 @@ async def get_related_nodes(
     )
 
 
+@router.get(
+    "/documents/{doc_id}/relations",
+    summary="Get all relations for a document",
+)
+async def get_document_relations(
+    doc_id: str,
+    limit: int = Query(500, ge=1, le=1000, description="Maximum relations"),
+) -> dict:
+    """Get all relations between nodes belonging to a document."""
+    builder = get_graph_builder()
+
+    relations = await builder.get_document_relations(doc_id=doc_id, limit=limit)
+
+    return {
+        "relations": [
+            {
+                "relation_id": r.relation_id,
+                "source_node_id": r.source_node_id,
+                "target_node_id": r.target_node_id,
+                "type": r.type.value,
+                "weight": r.weight,
+            }
+            for r in relations
+        ],
+        "total": len(relations),
+    }
+
+
 @router.delete(
     "/documents/{doc_id}/nodes",
     status_code=status.HTTP_200_OK,

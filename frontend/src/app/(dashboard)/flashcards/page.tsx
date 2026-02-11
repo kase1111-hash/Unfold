@@ -1,65 +1,98 @@
 "use client";
 
-import { useState } from "react";
-import { Brain, Plus, Download, Play } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Brain, Plus, Download, Play, Loader2, AlertCircle } from "lucide-react";
 import { FlashcardReview, StudyStats } from "@/components/learning";
 import { Button } from "@/components/ui";
+import { api } from "@/services/api";
+import toast from "react-hot-toast";
 
-// Mock flashcards for demo
-const DEMO_FLASHCARDS = [
-  {
-    card_id: "fc_1",
-    question: "What is the primary function of a knowledge graph in document comprehension?",
-    answer: "A knowledge graph connects concepts, entities, and relationships from documents, enabling users to visualize how ideas relate to each other and explore contextual connections that aid understanding.",
-    hint: "Think about how concepts connect to each other",
-    type: "concept",
-    difficulty: "intermediate",
-    key_concepts: ["knowledge graph", "concepts", "relationships"],
-  },
-  {
-    card_id: "fc_2",
-    question: "How does spaced repetition improve long-term memory retention?",
-    answer: "Spaced repetition schedules reviews at increasing intervals based on how well you remember each item. Items you struggle with are shown more frequently, while well-remembered items are shown less often, optimizing study time.",
-    hint: "Consider the timing of reviews",
-    type: "concept",
-    difficulty: "intermediate",
-    key_concepts: ["spaced repetition", "memory", "intervals"],
-  },
-  {
-    card_id: "fc_3",
-    question: "What is the SuperMemo 2 (SM2) algorithm?",
-    answer: "SM2 is a spaced repetition algorithm that calculates optimal review intervals using an 'easiness factor' that adjusts based on recall quality (rated 0-5). It's the foundation for many modern flashcard applications.",
-    type: "definition",
-    difficulty: "advanced",
-    key_concepts: ["SM2", "algorithm", "easiness factor"],
-  },
-  {
-    card_id: "fc_4",
-    question: "What is the difference between TF-IDF and semantic similarity for text relevance?",
-    answer: "TF-IDF measures relevance based on term frequency and document frequency (keyword matching), while semantic similarity uses embeddings to capture meaning, allowing it to identify relevant content even without exact keyword matches.",
-    hint: "One uses keywords, one uses meaning",
-    type: "comparison",
-    difficulty: "advanced",
-    key_concepts: ["TF-IDF", "semantic similarity", "embeddings"],
-  },
-  {
-    card_id: "fc_5",
-    question: "What does 'ELI5' mean in the context of text complexity?",
-    answer: "'Explain Like I'm 5' - a request to simplify complex information to a level that a young child could understand, using simple words, analogies, and avoiding technical jargon.",
-    type: "definition",
-    difficulty: "beginner",
-    key_concepts: ["ELI5", "simplification", "complexity"],
-  },
-];
+interface Flashcard {
+  card_id: string;
+  question: string;
+  answer: string;
+  hint?: string;
+  type?: string;
+  difficulty?: string;
+  key_concepts?: string[];
+}
 
 export default function FlashcardsPage() {
   const [isReviewing, setIsReviewing] = useState(false);
-  const [flashcards] = useState(DEMO_FLASHCARDS);
+  const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleReviewComplete = (results: { card_id: string; quality: number; time_ms: number }[]) => {
-    console.log("Review results:", results);
-    setIsReviewing(false);
-  };
+  const loadFlashcards = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const result = await api.getFlashcardsDue(50);
+      const cards: Flashcard[] = result.due_cards.map((card) => ({
+        card_id: card.card_id,
+        question: `Card ${card.card_id}`,
+        answer: "",
+        difficulty: card.easiness_factor > 2.5 ? "easy" : card.easiness_factor > 1.5 ? "intermediate" : "hard",
+      }));
+      setFlashcards(cards);
+    } catch {
+      setError("Failed to load flashcards. Make sure the backend is running.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFlashcards();
+  }, [loadFlashcards]);
+
+  const handleReview = useCallback(async (cardId: string, quality: number) => {
+    try {
+      const result = await api.reviewFlashcard(cardId, quality);
+      toast.success(
+        `Next review in ${result.interval_days} day${result.interval_days !== 1 ? "s" : ""}`
+      );
+    } catch {
+      toast.error("Failed to save review. Your progress may not be recorded.");
+    }
+  }, []);
+
+  const handleReviewComplete = useCallback(
+    (results: { card_id: string; quality: number; time_ms: number }[]) => {
+      setIsReviewing(false);
+      const correctCount = results.filter((r) => r.quality >= 3).length;
+      toast.success(`Session complete: ${correctCount}/${results.length} correct`);
+      loadFlashcards();
+    },
+    [loadFlashcards]
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+          <span className="text-slate-500 dark:text-slate-400">
+            Loading flashcards...
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <AlertCircle className="w-8 h-8 text-red-500" />
+          <span className="text-red-500 font-medium">{error}</span>
+          <Button variant="secondary" onClick={loadFlashcards}>
+            Retry
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -88,6 +121,7 @@ export default function FlashcardsPage() {
         <div className="max-w-2xl mx-auto">
           <FlashcardReview
             flashcards={flashcards}
+            onReview={handleReview}
             onComplete={handleReviewComplete}
           />
         </div>
@@ -102,49 +136,58 @@ export default function FlashcardsPage() {
               </div>
 
               <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
-                Ready to Review?
+                {flashcards.length > 0 ? "Ready to Review?" : "No Cards Due"}
               </h2>
 
               <p className="text-slate-600 dark:text-slate-400 mb-6">
-                You have {flashcards.length} cards ready for review. Regular reviews
-                help strengthen your memory.
+                {flashcards.length > 0
+                  ? `You have ${flashcards.length} card${flashcards.length !== 1 ? "s" : ""} ready for review. Regular reviews help strengthen your memory.`
+                  : "Upload a document and generate flashcards to start studying."}
               </p>
 
-              <Button
-                size="lg"
-                onClick={() => setIsReviewing(true)}
-                leftIcon={<Play className="w-5 h-5" />}
-              >
-                Start Review Session
-              </Button>
+              {flashcards.length > 0 && (
+                <Button
+                  size="lg"
+                  onClick={() => setIsReviewing(true)}
+                  leftIcon={<Play className="w-5 h-5" />}
+                >
+                  Start Review Session
+                </Button>
+              )}
             </div>
 
             {/* Card Preview */}
-            <div className="card">
-              <div className="p-4 border-b border-slate-200 dark:border-slate-700">
-                <h3 className="font-semibold text-slate-900 dark:text-white">
-                  Your Flashcards
-                </h3>
-              </div>
+            {flashcards.length > 0 && (
+              <div className="card">
+                <div className="p-4 border-b border-slate-200 dark:border-slate-700">
+                  <h3 className="font-semibold text-slate-900 dark:text-white">
+                    Due Cards
+                  </h3>
+                </div>
 
-              <div className="divide-y divide-slate-200 dark:divide-slate-700">
-                {flashcards.slice(0, 5).map((card) => (
-                  <div key={card.card_id} className="p-4">
-                    <p className="font-medium text-slate-900 dark:text-white text-sm mb-1">
-                      {card.question}
-                    </p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className="text-xs px-2 py-0.5 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded">
-                        {card.type}
-                      </span>
-                      <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 rounded">
-                        {card.difficulty}
-                      </span>
+                <div className="divide-y divide-slate-200 dark:divide-slate-700">
+                  {flashcards.slice(0, 5).map((card) => (
+                    <div key={card.card_id} className="p-4">
+                      <p className="font-medium text-slate-900 dark:text-white text-sm mb-1">
+                        {card.question}
+                      </p>
+                      <div className="flex items-center gap-2 mt-2">
+                        {card.type && (
+                          <span className="text-xs px-2 py-0.5 bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded">
+                            {card.type}
+                          </span>
+                        )}
+                        {card.difficulty && (
+                          <span className="text-xs px-2 py-0.5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 rounded">
+                            {card.difficulty}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
           {/* Sidebar */}

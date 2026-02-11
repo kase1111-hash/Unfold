@@ -7,6 +7,7 @@ type ViewMode = "technical" | "conceptual" | "hybrid";
 interface ReadingState {
   // Current document
   document: Document | null;
+  documentContent: string | null;
   isLoading: boolean;
   error: string | null;
 
@@ -37,6 +38,7 @@ interface ReadingState {
 
 export const useReadingStore = create<ReadingState>((set, get) => ({
   document: null,
+  documentContent: null,
   isLoading: false,
   error: null,
   complexityLevel: 50,
@@ -50,9 +52,13 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
   loadDocument: async (docId: string) => {
     set({ isLoading: true, error: null });
     try {
-      const document = await api.getDocument(docId);
+      const [document, contentResult] = await Promise.all([
+        api.getDocument(docId),
+        api.getDocumentContent(docId).catch(() => null),
+      ]);
       set({
         document,
+        documentContent: contentResult?.content || null,
         isLoading: false,
         paraphrasedContent: null,
       });
@@ -118,6 +124,7 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
   clearDocument: () => {
     set({
       document: null,
+      documentContent: null,
       paraphrasedContent: null,
       selectedText: null,
       activeNodes: [],

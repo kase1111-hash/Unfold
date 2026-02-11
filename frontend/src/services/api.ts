@@ -311,6 +311,93 @@ class ApiClient {
     return response.data;
   }
 
+  async getDocumentRelations(
+    docId: string,
+    limit = 500
+  ): Promise<{
+    relations: Array<{
+      relation_id: string;
+      source_node_id: string;
+      target_node_id: string;
+      type: string;
+      weight: number;
+    }>;
+    total: number;
+  }> {
+    const response = await this.client.get(`/graph/documents/${docId}/relations`, {
+      params: { limit },
+    });
+    return response.data;
+  }
+
+  async getDocumentContent(docId: string): Promise<{ doc_id: string; content: string }> {
+    const response = await this.client.get<{ doc_id: string; content: string }>(
+      `/documents/${docId}/content`
+    );
+    return response.data;
+  }
+
+  // Learning endpoints
+  async getFlashcardsDue(limit = 20): Promise<{
+    due_cards: Array<{
+      card_id: string;
+      days_overdue: number;
+      repetitions: number;
+      easiness_factor: number;
+    }>;
+    total_due: number;
+  }> {
+    const response = await this.client.get("/learning/flashcards/due", {
+      params: { limit },
+    });
+    return response.data;
+  }
+
+  async reviewFlashcard(
+    cardId: string,
+    quality: number
+  ): Promise<{
+    card_id: string;
+    next_review: string;
+    interval_days: number;
+    easiness_factor: number;
+    repetitions: number;
+    retention_rate: number;
+  }> {
+    const response = await this.client.post("/learning/flashcards/review", {
+      card_id: cardId,
+      quality,
+    });
+    return response.data;
+  }
+
+  async getStudyStats(): Promise<{
+    total_cards: number;
+    due_now: number;
+    due_today: number;
+    average_ef: number;
+    average_retention: number;
+    mature_cards: number;
+    learning_cards: number;
+  }> {
+    const response = await this.client.get("/learning/flashcards/stats");
+    return response.data;
+  }
+
+  async getEngagementProfile(): Promise<{
+    total_reading_time_minutes: number;
+    documents_read: number;
+    avg_session_duration_minutes: number;
+    avg_scroll_depth: number;
+    preferred_complexity: number;
+    total_highlights: number;
+    total_flashcards: number;
+    comprehension_score: number;
+  }> {
+    const response = await this.client.get("/learning/engagement/profile");
+    return response.data;
+  }
+
   // Health check
   async getHealth(): Promise<{
     status: string;

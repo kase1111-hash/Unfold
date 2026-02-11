@@ -10,8 +10,8 @@ from io import BytesIO
 class TestDocumentIngestionFlow:
     """Test complete document ingestion pipeline."""
 
-    def test_list_documents_empty(self, client: TestClient, api_prefix: str):
-        """Test listing documents returns empty list initially."""
+    def test_list_documents_returns_200(self, client: TestClient, api_prefix: str):
+        """Test listing documents returns 200 with data."""
         response = client.get(f"{api_prefix}/documents/")
         assert response.status_code == 200
         data = response.json()
@@ -35,14 +35,12 @@ class TestDocumentIngestionFlow:
             f"{api_prefix}/documents/nonexistent_doc_id",
             headers=auth_headers,
         )
-        # Should be 404 or 401 if auth fails
-        assert response.status_code in [404, 401, 403]
+        assert response.status_code == 404
 
     def test_upload_invalid_file_type(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
         """Test uploading an invalid file type is rejected."""
-        # Create a fake executable file
         file_content = b"#!/bin/bash\necho 'hello'"
         files = {
             "file": ("test.exe", BytesIO(file_content), "application/octet-stream")
@@ -53,13 +51,12 @@ class TestDocumentIngestionFlow:
             files=files,
             headers=auth_headers,
         )
-        # Should reject invalid file types
-        assert response.status_code in [400, 401, 415, 422]
+        assert response.status_code in [400, 415, 422]
 
     def test_upload_empty_file(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
-        """Test uploading an empty file is handled properly."""
+        """Test uploading an empty file is rejected."""
         files = {"file": ("empty.pdf", BytesIO(b""), "application/pdf")}
 
         response = client.post(
@@ -67,8 +64,7 @@ class TestDocumentIngestionFlow:
             files=files,
             headers=auth_headers,
         )
-        # Should reject empty files
-        assert response.status_code in [400, 401, 422]
+        assert response.status_code in [400, 422]
 
     def test_upload_requires_authentication(self, client: TestClient, api_prefix: str):
         """Test that document upload requires authentication."""
@@ -82,72 +78,79 @@ class TestDocumentIngestionFlow:
 class TestDocumentProcessing:
     """Test document processing and validation."""
 
-    def test_document_status_endpoint_structure(
+    def test_nonexistent_document_returns_404(
         self, client: TestClient, api_prefix: str, mock_document_id: str
     ):
-        """Test document status endpoint returns proper structure."""
+        """Test that fetching a nonexistent document returns 404."""
         response = client.get(f"{api_prefix}/documents/{mock_document_id}")
-        # Either 404 (not found) or 200 with proper structure
-        if response.status_code == 200:
-            data = response.json()
-            # Should have document fields
-            assert "doc_id" in data or "id" in data or "document_id" in data
+        assert response.status_code == 404
 
-    def test_document_paraphrase_endpoint(
+    def test_paraphrase_requires_auth(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        mock_document_id: str,
+    ):
+        """Test paraphrase endpoint requires authentication."""
+        response = client.get(
+            f"{api_prefix}/documents/{mock_document_id}/paraphrase",
+        )
+        assert response.status_code == 401
+
+    def test_paraphrase_nonexistent_document(
         self,
         client: TestClient,
         api_prefix: str,
         mock_document_id: str,
         auth_headers: dict,
     ):
-        """Test paraphrase endpoint structure."""
+        """Test paraphrase on nonexistent document returns 404."""
         response = client.get(
             f"{api_prefix}/documents/{mock_document_id}/paraphrase",
             headers=auth_headers,
         )
-        # Either 404 (doc not found), 401 (unauth), or 200 with content
-        assert response.status_code in [200, 401, 404]
+        assert response.status_code == 404
 
 
 class TestDocumentMetadata:
     """Test document metadata extraction and validation."""
 
-    def test_document_list_pagination_bounds(self, client: TestClient, api_prefix: str):
-        """Test pagination with boundary values."""
-        # Test minimum page size
+    def test_document_list_min_page_size(self, client: TestClient, api_prefix: str):
+        """Test pagination with minimum page size."""
         response = client.get(f"{api_prefix}/documents/?page=1&page_size=1")
         assert response.status_code == 200
 
-        # Test maximum page size (should be capped)
+    def test_document_list_excessive_page_size(
+        self, client: TestClient, api_prefix: str
+    ):
+        """Test pagination with excessive page size is rejected or capped."""
         response = client.get(f"{api_prefix}/documents/?page=1&page_size=1000")
         assert response.status_code in [200, 422]
 
-        # Test invalid page number
+    def test_document_list_invalid_page(self, client: TestClient, api_prefix: str):
+        """Test pagination with invalid page number."""
         response = client.get(f"{api_prefix}/documents/?page=0&page_size=10")
         assert response.status_code in [200, 422]
 
     def test_document_search_by_status(self, client: TestClient, api_prefix: str):
         """Test filtering documents by status."""
         response = client.get(f"{api_prefix}/documents/?status=validated")
-        assert response.status_code in [200, 422]
+        assert response.status_code == 200
 
 
 class TestDocumentValidation:
     """Test document validation and DOI verification."""
 
-    def test_doi_validation_format(self, client: TestClient, api_prefix: str):
-        """Test DOI format validation."""
-        # Valid DOI format
+    def test_doi_lookup(self, client: TestClient, api_prefix: str):
+        """Test DOI lookup returns 404 for unknown DOI."""
         valid_doi = "10.1234/test.2024.001"
         response = client.get(f"{api_prefix}/documents/doi/{valid_doi}")
-        # Should attempt lookup (404 if not found, 200 if found)
-        assert response.status_code in [200, 404, 422]
+        assert response.status_code == 404
 
     def test_invalid_doi_format_rejected(self, client: TestClient, api_prefix: str):
         """Test invalid DOI formats are rejected."""
         invalid_doi = "not-a-valid-doi"
         response = client.get(f"{api_prefix}/documents/doi/{invalid_doi}")
-        # Should reject or return 404
         assert response.status_code in [400, 404, 422]
 
 

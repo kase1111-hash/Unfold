@@ -12,6 +12,7 @@ interface DocumentViewerProps {
 export function DocumentViewer({ documentId }: DocumentViewerProps) {
   const {
     document,
+    documentContent,
     isLoading,
     error,
     viewMode,
@@ -64,8 +65,7 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
     );
   }
 
-  // Mock content for demo - in production this would come from the document
-  const technicalContent = document.abstract || "Document content would appear here...";
+  const technicalContent = documentContent || document.abstract || "No content available. The document may still be processing.";
   const simplifiedContent = paraphrasedContent || technicalContent;
 
   return (
