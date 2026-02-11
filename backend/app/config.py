@@ -141,11 +141,11 @@ class Settings(BaseSettings):
                     "NEO4J_PASSWORD environment variable must be set in production/staging"
                 )
             # Use development default
-            self.neo4j_password = "password"
+            self.neo4j_password = "changeme"
 
-        if is_production and self.neo4j_password == "password":
+        if is_production and self.neo4j_password in ("password", "changeme"):
             raise ConfigurationError(
-                "NEO4J_PASSWORD cannot be 'password' in production"
+                "NEO4J_PASSWORD must be changed from its default in production"
             )
 
         return self

@@ -147,18 +147,20 @@ class KnowledgeGraphBuilder:
         # Step 3: Extract and create relations
         if extract_relations and len(entities) >= 2:
             try:
-                # Integrated pipeline uses synchronous extraction
-                if self.use_integrated:
-                    relations = self.relation_extractor.extract_relations(
-                        text, entities
-                    )
-                elif self.use_llm_relations:
+                import asyncio
+
+                if self.use_llm_relations and not self.use_integrated:
+                    # LLM-only extractor is natively async
                     relations = await self.relation_extractor.extract_relations(
                         text, entities
                     )
                 else:
-                    relations = self.relation_extractor.extract_relations(
-                        text, entities
+                    # Integrated and rule-based extractors are synchronous —
+                    # run in a thread to avoid blocking the event loop
+                    relations = await asyncio.to_thread(
+                        self.relation_extractor.extract_relations,
+                        text,
+                        entities,
                     )
 
                 logger.info(f"Extracted {len(relations)} relations from text")

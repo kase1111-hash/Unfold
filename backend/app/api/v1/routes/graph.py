@@ -229,12 +229,16 @@ async def search_nodes(
     """Search for nodes in the knowledge graph."""
     builder = get_graph_builder()
 
-    nodes = await builder.search_nodes(
-        query=query,
-        node_type=node_type,
-        source_doc_id=source_doc_id,
-        limit=limit,
-    )
+    try:
+        nodes = await builder.search_nodes(
+            query=query,
+            node_type=node_type,
+            source_doc_id=source_doc_id,
+            limit=limit,
+        )
+    except Exception:
+        # Neo4j unavailable — return empty results instead of 500
+        nodes = []
 
     return NodeListResponse(
         nodes=nodes,
