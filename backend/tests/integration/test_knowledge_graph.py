@@ -383,6 +383,25 @@ class PausedBuild:
 class TestDocumentRebuild:
     """POST /graph/documents/{id}/build with the graph build replaced."""
 
+    def test_startup_resets_builds_interrupted_by_a_crash(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        """A process killed mid-build leaves the document in PROCESSING;
+        the startup reset puts it back to VALIDATED so it can be rebuilt."""
+        doc_id = empty_graph_document["doc_id"]
+        _set_document_state(client, doc_id, DocumentStatus.PROCESSING, [])
+
+        reset = client.portal.call(document_graph.reset_interrupted_builds)
+
+        assert reset >= 1
+        response = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "validated"
+
     def test_conflict_while_building_and_status_transitions(
         self,
         client: TestClient,

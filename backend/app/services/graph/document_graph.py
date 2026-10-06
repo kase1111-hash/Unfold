@@ -201,6 +201,19 @@ async def build_document_graph_task(doc_id: str) -> None:
         logger.exception(f"Graph build for {doc_id} failed")
 
 
+async def reset_interrupted_builds() -> int:
+    """Return documents left in PROCESSING by a killed process to VALIDATED.
+
+    Call at startup: build locks live in memory, so no build can be running
+    yet, and without this a crash mid-build leaves the document showing
+    "building" forever. Returns how many documents were reset.
+    """
+    async with get_session_context() as session:
+        return await DocumentRepository(session).reset_status(
+            DocumentStatus.PROCESSING, DocumentStatus.VALIDATED
+        )
+
+
 async def delete_document_graph(doc_id: str) -> int:
     """Delete a document's graph nodes; returns how many were removed.
 

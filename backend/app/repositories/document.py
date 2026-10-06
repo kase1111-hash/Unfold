@@ -238,6 +238,21 @@ class DocumentRepository:
         )
         return await self.get_by_id(doc_id)
 
+    async def reset_status(
+        self, from_status: DocumentStatus, to_status: DocumentStatus
+    ) -> int:
+        """Move every document in ``from_status`` to ``to_status``.
+
+        Returns:
+            Number of documents updated
+        """
+        result = await self.session.execute(
+            update(DocumentORM)
+            .where(DocumentORM.status == from_status)
+            .values(status=to_status, updated_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount
+
     async def update_content(
         self,
         doc_id: str,

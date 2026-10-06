@@ -21,6 +21,7 @@ from app.db import (
     create_tables,
 )
 from app.middleware import RateLimitMiddleware
+from app.services.graph.document_graph import reset_interrupted_builds
 
 # Configure logging
 logging.basicConfig(
@@ -58,6 +59,9 @@ async def lifespan(app: FastAPI):
         if settings.environment in ("development", "test"):
             await create_tables()
         logger.info("PostgreSQL connected successfully")
+        reset = await reset_interrupted_builds()
+        if reset:
+            logger.warning(f"Reset {reset} document(s) left mid graph build")
     except Exception as e:
         logger.error(f"PostgreSQL connection failed: {e}")
 
