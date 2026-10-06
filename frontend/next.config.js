@@ -18,11 +18,13 @@ const nextConfig = {
   // API proxy to backend
   async rewrites() {
     // Only for an absolute backend URL: a same-origin "/api/v1" (nginx in front)
-    // would rewrite /api/* onto itself.
+    // would rewrite /api/v1/* onto itself.
     if (!/^https?:\/\//.test(API_URL)) return [];
+    // API_URL already ends in /api/v1, so /api/v1/<x> -> <API_URL>/<x>. (The
+    // frontend's own /api/health stays here.)
     return [
       {
-        source: '/api/:path*',
+        source: '/api/v1/:path*',
         destination: `${API_URL}/:path*`,
       },
     ];

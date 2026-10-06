@@ -1,4 +1,13 @@
-import { test, expect, USER } from "./fixtures";
+import {
+  test,
+  expect,
+  appAlerts,
+  toasts,
+  USER,
+  RATE_LIMITED,
+  TOKEN_EXPIRED,
+  UNHANDLED_500,
+} from "./fixtures";
 
 test.describe("Login page", () => {
   test.use({ authenticated: false });
@@ -49,7 +58,7 @@ test.describe("Login page", () => {
 
   test("signs in and lands on the dashboard", async ({ page, api }) => {
     api.on("POST", "/auth/login", {
-      body: { user: USER, access_token: "fresh-token", token_type: "bearer", expires_in: 900 },
+      body: { user: USER, access_token: "fresh-token", token_type: "bearer", expires_in: 1800 },
     });
     await page.goto("/login");
     await page.getByLabel("Email").fill("alice@example.com");
@@ -101,7 +110,7 @@ test.describe("Register page", () => {
   test("creates an account and lands on the dashboard", async ({ page, api }) => {
     api.on("POST", "/auth/register", {
       status: 201,
-      body: { user: USER, access_token: "new-user-token", token_type: "bearer", expires_in: 900 },
+      body: { user: USER, access_token: "new-user-token", token_type: "bearer", expires_in: 1800 },
     });
     await page.goto("/register");
     await page.getByLabel("Email").fill("alice@example.com");
@@ -130,20 +139,94 @@ test.describe("Protected routes", () => {
 
         await expect(page).toHaveURL(/\/login$/);
         await expect(page.getByRole("heading", { name: "Welcome Back" })).toBeVisible();
-        // Protected pages are not rendered (and fire no requests) before auth
-        expect(api.calls.map((c) => c.path)).toEqual([]);
+        // Only the (rejected) attempt to restore the session from the refresh
+        // cookie: protected pages are not rendered and fire no requests
+        expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /auth/refresh"]);
       });
     }
+
+    test("a valid refresh cookie restores the session without signing in", async ({
+      page,
+      api,
+    }) => {
+      api.on("POST", "/auth/refresh", {
+        body: { access_token: "restored-token", token_type: "bearer", expires_in: 1800 },
+      });
+      await page.goto("/documents");
+
+      await expect(page.getByRole("heading", { level: 1, name: "Documents" })).toBeVisible();
+      await expect(page).toHaveURL(/\/documents$/);
+      expect(api.callsTo("POST", "/auth/refresh")).toHaveLength(1);
+      expect(api.callsTo("GET", "/auth/me")[0].headers["authorization"]).toBe(
+        "Bearer restored-token"
+      );
+      expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe(
+        "restored-token"
+      );
+    });
+  });
+
+  for (const [name, failure, message] of [
+    ["rate limited (429)", RATE_LIMITED, "Too many requests. Please try again later."],
+    [
+      "a server error (500)",
+      UNHANDLED_500,
+      "Could not reach the server, or it ran into an error. Please try again.",
+    ],
+  ] as const) {
+    test(`a session check that is ${name} keeps the session and can be retried`, async ({
+      page,
+      api,
+    }) => {
+      let fail = true;
+      api.on("GET", "/auth/me", () => (fail ? failure : { body: USER }));
+      await page.goto("/dashboard");
+
+      const alert = appAlerts(page);
+      await expect(alert.getByRole("heading", { name: "Could not check your session" })).toBeVisible();
+      await expect(alert).toContainText(message);
+      await expect(page).toHaveURL(/\/dashboard$/);
+      expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe("test-token");
+
+      fail = false;
+      await alert.getByRole("button", { name: "Retry" }).click();
+
+      await expect(page.getByRole("heading", { name: "Welcome back, Alice Example!" })).toBeVisible();
+      await expect(page).toHaveURL(/\/dashboard$/);
+    });
+  }
+
+  test("an expired token whose refresh is rate limited does not sign the user out", async ({
+    page,
+    api,
+  }) => {
+    api.on("GET", "/auth/me", (call) =>
+      call.headers["authorization"] === "Bearer refreshed-token" ? { body: USER } : TOKEN_EXPIRED
+    );
+    let refreshFails = true;
+    api.on("POST", "/auth/refresh", () =>
+      refreshFails
+        ? RATE_LIMITED
+        : { body: { access_token: "refreshed-token", token_type: "bearer", expires_in: 1800 } }
+    );
+    await page.goto("/dashboard");
+
+    await expect(appAlerts(page)).toContainText("Too many requests. Please try again later.");
+    await expect(page).toHaveURL(/\/dashboard$/);
+    expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe("test-token");
+
+    refreshFails = false;
+    await appAlerts(page).getByRole("button", { name: "Retry" }).click();
+
+    await expect(page.getByRole("heading", { name: "Welcome back, Alice Example!" })).toBeVisible();
+    expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBe("refreshed-token");
   });
 
   test("an expired session that cannot be refreshed redirects to /login", async ({
     page,
     api,
   }) => {
-    api.on("GET", "/auth/me", {
-      status: 401,
-      body: { detail: { code: "TOKEN_EXPIRED", message: "Token expired" } },
-    });
+    api.on("GET", "/auth/me", TOKEN_EXPIRED);
     await page.goto("/dashboard");
 
     await expect(page).toHaveURL(/\/login$/);
@@ -154,7 +237,6 @@ test.describe("Protected routes", () => {
   test("concurrent 401s share a single token refresh", async ({ page, api }) => {
     const isFresh = (headers: Record<string, string>) =>
       headers["authorization"] === "Bearer refreshed-token";
-    const expired = { status: 401, body: { detail: { code: "TOKEN_EXPIRED", message: "Expired" } } };
     // /auth/me still accepts the old token; the page's own requests do not
     for (const path of [
       "/learning/flashcards/due",
@@ -163,28 +245,17 @@ test.describe("Protected routes", () => {
     ]) {
       const original = path;
       api.on("GET", original, (call) => {
-        if (!isFresh(call.headers)) return expired;
+        if (!isFresh(call.headers)) return TOKEN_EXPIRED;
         if (original.endsWith("/due")) {
           return { body: { due_cards: api.data.dueCards, total_due: api.data.dueCards.length } };
         }
         if (original.endsWith("/stats")) return { body: api.data.stats };
-        return {
-          body: {
-            total_reading_time_minutes: 0,
-            documents_read: 0,
-            avg_session_duration_minutes: 0,
-            avg_scroll_depth: 0,
-            preferred_complexity: 50,
-            total_highlights: 0,
-            total_flashcards: 0,
-            comprehension_score: 0,
-          },
-        };
+        return { body: api.data.engagement };
       });
     }
     api.on("POST", "/auth/refresh", {
       delayMs: 500,
-      body: { access_token: "refreshed-token", token_type: "bearer", expires_in: 900 },
+      body: { access_token: "refreshed-token", token_type: "bearer", expires_in: 1800 },
     });
 
     await page.goto("/flashcards");
@@ -205,14 +276,29 @@ test.describe("Protected routes", () => {
     await expect(page.getByTestId("stat-card").filter({ hasText: "Flashcards" })).toContainText("5");
 
     // From now on every request is rejected and the refresh cookie is gone
-    api.on("GET", /^\/learning\//, {
-      status: 401,
-      body: { detail: { code: "TOKEN_EXPIRED", message: "Token expired" } },
-    });
+    api.on("GET", /^\/learning\//, TOKEN_EXPIRED);
     await page.getByRole("navigation").getByRole("link", { name: "Flashcards" }).click();
 
     await expect(page).toHaveURL(/\/login$/);
     expect(await page.evaluate(() => localStorage.getItem("access_token"))).toBeNull();
+  });
+
+  test("an expired session says so instead of showing the refresh error", async ({
+    page,
+    api,
+  }) => {
+    await page.goto("/dashboard");
+    await expect(page.getByTestId("stat-card").filter({ hasText: "Flashcards" })).toContainText("5");
+
+    api.on("GET", "/documents/", TOKEN_EXPIRED);
+    await page.getByRole("navigation").getByRole("link", { name: "Documents" }).click();
+
+    await expect(page).toHaveURL(/\/login$/);
+    // (In development React loads the page twice, hence possibly two toasts)
+    await expect(
+      toasts(page).filter({ hasText: "Your session has expired. Please sign in again." }).first()
+    ).toBeVisible();
+    await expect(page.getByText("Refresh token required")).toHaveCount(0);
   });
 
   test("signing out clears the session and returns to /login", async ({ page, api }) => {

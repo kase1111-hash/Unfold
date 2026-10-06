@@ -5,11 +5,18 @@ import type {
   GraphVisualizationNode,
   GraphVisualizationLink,
 } from "@/types";
-import { api, getErrorMessage } from "@/services/api";
+import { api, getErrorCode, getErrorMessage } from "@/services/api";
 
 type DocumentRelation = Awaited<
   ReturnType<typeof api.getDocumentRelations>
 >["relations"][number];
+
+// How much of a graph is loaded (GET /graph/nodes allows up to 1000 nodes and
+// /relations up to 1000 relations per document). The backend returns nodes in
+// a fixed order, so a capped result is always the same subset.
+const DOCUMENT_NODE_LIMIT = 1000;
+const ALL_DOCUMENTS_NODE_LIMIT = 500;
+const RELATION_LIMIT = 1000;
 
 interface GraphState {
   // Graph data
@@ -20,9 +27,15 @@ interface GraphState {
   // Document whose graph is shown (null: all of the user's documents / none)
   currentDocId: string | null;
 
-  // Building a document's graph on demand
-  isBuilding: boolean;
-  buildError: string | null;
+  // Building a document's graph on demand, per document
+  // Documents whose build request from this page is still running
+  buildingDocIds: string[];
+  // The last failed build; shown only while its document is displayed
+  buildError: { docId: string; message: string } | null;
+  // Documents the server reported as already being built (409
+  // BUILD_IN_PROGRESS, e.g. by the background build after upload). The graph
+  // panel shows them as building until it has polled their current status.
+  serverBuildDocIds: string[];
 
   // Expanding a node's neighbours (kept apart from the initial load so a
   // failure or spinner does not replace the whole graph)
@@ -41,6 +54,8 @@ interface GraphState {
   loadGraphForDocument: (docId: string) => Promise<void>;
   loadGraphForAllDocuments: () => Promise<void>;
   buildGraphForDocument: (docId: string) => Promise<void>;
+  // The panel has fresh status for a document in serverBuildDocIds
+  endServerBuild: (docId: string) => void;
   loadRelatedNodes: (nodeId: string, depth?: number) => Promise<void>;
   selectNode: (nodeId: string | null) => void;
   setHoveredNode: (nodeId: string | null) => void;
@@ -103,8 +118,9 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   isLoading: false,
   error: null,
   currentDocId: null,
-  isBuilding: false,
+  buildingDocIds: [],
   buildError: null,
+  serverBuildDocIds: [],
   isExpanding: false,
   expandError: null,
   selectedNodeId: null,
@@ -118,8 +134,8 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
     // Relations are optional: if only they fail, still show the nodes
     const [nodesResult, relationsResult] = await Promise.allSettled([
-      api.searchNodes({ sourceDocId: docId, limit: 100 }),
-      api.getDocumentRelations(docId),
+      api.searchNodes({ sourceDocId: docId, limit: DOCUMENT_NODE_LIMIT }),
+      api.getDocumentRelations(docId, RELATION_LIMIT),
     ]);
     if (seq !== loadSeq) return;
 
@@ -138,11 +154,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
     try {
       // Without source_doc_id the backend returns nodes of the caller's documents
-      const { nodes } = await api.searchNodes({ limit: 200 });
+      const { nodes } = await api.searchNodes({ limit: ALL_DOCUMENTS_NODE_LIMIT });
       // Relations are served per document
       const docIds = Array.from(new Set(nodes.map((n) => n.source_doc_id)));
       const relationResults = await Promise.allSettled(
-        docIds.map((id) => api.getDocumentRelations(id))
+        docIds.map((id) => api.getDocumentRelations(id, RELATION_LIMIT))
       );
       if (seq !== loadSeq) return;
 
@@ -157,23 +173,54 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   },
 
   buildGraphForDocument: async (docId: string) => {
-    set({ isBuilding: true, buildError: null });
+    set((state) => ({
+      buildingDocIds: [...state.buildingDocIds.filter((id) => id !== docId), docId],
+      buildError: null,
+    }));
+    const finished = () =>
+      set((state) => ({
+        buildingDocIds: state.buildingDocIds.filter((id) => id !== docId),
+      }));
     try {
       const result = await api.buildDocumentGraph(docId);
-      set({ isBuilding: false });
+      finished();
       // The user may have switched documents while the build was running
       if (get().currentDocId !== docId) return;
       if (result.nodes_created === 0) {
         set({
-          buildError:
-            result.errors[0] || "No concepts could be extracted from this document.",
+          buildError: {
+            docId,
+            message:
+              result.errors[0] || "No concepts could be extracted from this document.",
+          },
         });
         return;
       }
       await get().loadGraphForDocument(docId);
     } catch (error) {
-      set({ isBuilding: false, buildError: getErrorMessage(error) });
+      finished();
+      if (getErrorCode(error) === "BUILD_IN_PROGRESS") {
+        // Another build of this document (e.g. the one started by the upload)
+        // is running: wait for it instead of reporting an error
+        set((state) => ({
+          serverBuildDocIds: [
+            ...state.serverBuildDocIds.filter((id) => id !== docId),
+            docId,
+          ],
+        }));
+        return;
+      }
+      if (get().currentDocId !== docId) return;
+      set({ buildError: { docId, message: getErrorMessage(error) } });
     }
+  },
+
+  endServerBuild: (docId: string) => {
+    set((state) =>
+      state.serverBuildDocIds.includes(docId)
+        ? { serverBuildDocIds: state.serverBuildDocIds.filter((id) => id !== docId) }
+        : {}
+    );
   },
 
   loadRelatedNodes: async (nodeId: string, depth = 1) => {

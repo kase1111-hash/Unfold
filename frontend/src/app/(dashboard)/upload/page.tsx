@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+import axios from "axios";
 import { Upload, FileText, X, CheckCircle, AlertCircle } from "lucide-react";
 import { api, getErrorMessage } from "@/services/api";
 import { Button } from "@/components/ui";
@@ -10,11 +11,20 @@ import toast from "react-hot-toast";
 
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 
+// Sending the same file again only helps when the upload failed for a passing
+// reason (no connection, rate limit, server error), not when it was rejected
+function isTransientError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const status = error.response?.status;
+  return status === undefined || status === 429 || status >= 500;
+}
+
 export default function UploadPage() {
   const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [status, setStatus] = useState<UploadStatus>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -80,6 +90,7 @@ export default function UploadPage() {
       const message = getErrorMessage(err);
       setStatus("error");
       setError(message);
+      setCanRetry(isTransientError(err));
       toast.error(message);
     }
   };
@@ -156,19 +167,21 @@ export default function UploadPage() {
                   {formatFileSize(file.size)}
                 </p>
               </div>
-              {status === "idle" && (
-                <button
-                  onClick={handleRemoveFile}
-                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              )}
               {status === "success" && (
                 <CheckCircle className="w-6 h-6 text-green-500" />
               )}
               {status === "error" && (
                 <AlertCircle className="w-6 h-6 text-red-500" />
+              )}
+              {(status === "idle" || status === "error") && (
+                <button
+                  onClick={handleRemoveFile}
+                  title="Remove file"
+                  aria-label="Remove file"
+                  className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               )}
             </div>
 
@@ -210,13 +223,20 @@ export default function UploadPage() {
                 <p role="alert" className="text-sm text-red-600 dark:text-red-400 text-center">
                   {error || "Upload failed. Please try again."}
                 </p>
-                <Button
-                  onClick={handleUpload}
-                  className="w-full"
-                  variant="secondary"
-                >
-                  Retry Upload
-                </Button>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleRemoveFile}
+                    className="flex-1"
+                    variant={canRetry ? "secondary" : "primary"}
+                  >
+                    Choose another file
+                  </Button>
+                  {canRetry && (
+                    <Button onClick={handleUpload} className="flex-1">
+                      Retry Upload
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
           </div>

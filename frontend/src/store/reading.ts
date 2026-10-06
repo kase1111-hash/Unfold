@@ -1,18 +1,26 @@
 import { create } from "zustand";
 import type { Document, GraphNode, TextHighlight } from "@/types";
+import axios from "axios";
 import { api, getErrorMessage } from "@/services/api";
 
 type ViewMode = "technical" | "conceptual" | "hybrid";
 
 // Most recently requested document; responses for any other id are dropped
 let latestDocId: string | null = null;
+// Incremented by every paraphrase request and document change; only the latest
+// request may write the result (or clear the spinner)
+let paraphraseSeq = 0;
 
 interface ReadingState {
   // Current document
+  // Id the last loadDocument call asked for (document/error belong to it)
+  requestedDocId: string | null;
   document: Document | null;
   documentContent: string | null;
   isLoading: boolean;
   error: string | null;
+  // The document does not exist or belongs to someone else (404)
+  notFound: boolean;
 
   // Reading settings
   complexityLevel: number; // 0-100
@@ -43,10 +51,12 @@ interface ReadingState {
 }
 
 export const useReadingStore = create<ReadingState>((set, get) => ({
+  requestedDocId: null,
   document: null,
   documentContent: null,
   isLoading: false,
   error: null,
+  notFound: false,
   complexityLevel: 50,
   viewMode: "hybrid",
   paraphrasedContent: null,
@@ -58,12 +68,17 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
 
   loadDocument: async (docId: string) => {
     latestDocId = docId;
+    // A paraphrase still running for the previous document must not finish here
+    paraphraseSeq++;
     set({
+      requestedDocId: docId,
       isLoading: true,
       error: null,
+      notFound: false,
       document: null,
       documentContent: null,
       paraphrasedContent: null,
+      isParaphrasing: false,
       paraphraseError: null,
       selectedText: null,
       activeNodes: [],
@@ -86,6 +101,7 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
       if (latestDocId !== docId) return;
       set({
         error: getErrorMessage(error),
+        notFound: axios.isAxiosError(error) && error.response?.status === 404,
         isLoading: false,
       });
     }
@@ -109,19 +125,22 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
     const { document, complexityLevel } = get();
     if (!document) return;
 
+    const seq = ++paraphraseSeq;
     set({ isParaphrasing: true, paraphraseError: null });
     try {
       const result = await api.getDocumentParaphrase(
         document.doc_id,
         complexityLevel
       );
-      if (get().document?.doc_id !== document.doc_id) return;
+      // Superseded (another document was opened, or a newer request started):
+      // whoever superseded it owns isParaphrasing now
+      if (seq !== paraphraseSeq) return;
       set({
         paraphrasedContent: result.content,
         isParaphrasing: false,
       });
     } catch (error) {
-      if (get().document?.doc_id !== document.doc_id) return;
+      if (seq !== paraphraseSeq) return;
       // Do NOT write the page-level `error`: that replaces the whole document view.
       set({
         paraphraseError: getErrorMessage(error),

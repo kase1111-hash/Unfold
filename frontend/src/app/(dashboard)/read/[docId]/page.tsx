@@ -3,19 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { GraduationCap } from "lucide-react";
+import { AlertCircle, GraduationCap, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import { DocumentViewer, ComplexitySlider, ViewModeToggle } from "@/components/reader";
-import { KnowledgeGraph, NodeDetails } from "@/components/graph";
+import { DocumentGraphPanel, NodeDetails } from "@/components/graph";
 import { Button } from "@/components/ui";
 import { api, getErrorMessage } from "@/services/api";
 import { useGraphStore, useReadingStore } from "@/store";
-
-// After upload the graph is built by a background task; the document becomes
-// "indexed" when it is done. Poll for that (bounded: a failed build never gets there).
-const GRAPH_POLL_INTERVAL_MS = 3000;
-const GRAPH_POLL_ATTEMPTS = 20;
-const NOT_YET_INDEXED = ["pending", "processing", "validated"];
 
 // App Router passes dynamic segments still URL-encoded (doc ids may contain ':')
 function decodeParam(value: string): string {
@@ -30,56 +24,79 @@ export default function ReadPage() {
   const params = useParams();
   const docId = decodeParam(params.docId as string);
   const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
-  const loadGraphForDocument = useGraphStore((s) => s.loadGraphForDocument);
+  const loadDocument = useReadingStore((s) => s.loadDocument);
   const updateDocument = useReadingStore((s) => s.updateDocument);
+  // Only state of this page's document counts: until loadDocument runs, the
+  // store still holds the previously opened one
+  const isCurrent = useReadingStore((s) => s.requestedDocId === docId);
   const docStatus = useReadingStore((s) =>
     s.document?.doc_id === docId ? s.document.status : undefined
   );
+  const loadError = useReadingStore((s) => (s.requestedDocId === docId ? s.error : null));
+  const notFound = useReadingStore((s) => s.requestedDocId === docId && s.notFound);
   const [isGenerating, setIsGenerating] = useState(false);
+  // Cards stored by the last "Generate flashcards" (0: they all existed already)
   const [generatedCount, setGeneratedCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    loadDocument(docId);
+  }, [docId, loadDocument]);
 
   useEffect(() => {
     setGeneratedCount(null);
   }, [docId]);
-
-  useEffect(() => {
-    if (!docStatus || !NOT_YET_INDEXED.includes(docStatus)) return;
-
-    let cancelled = false;
-    let attempts = 0;
-    const timer = setInterval(async () => {
-      attempts += 1;
-      if (attempts >= GRAPH_POLL_ATTEMPTS) clearInterval(timer);
-      try {
-        const doc = await api.getDocument(docId);
-        if (cancelled || doc.status === docStatus) return;
-        updateDocument(doc); // changes docStatus, which stops this poll
-        if (doc.status === "indexed" && useGraphStore.getState().nodes.length === 0) {
-          loadGraphForDocument(docId);
-        }
-      } catch {
-        // Transient failure: try again on the next tick
-      }
-    }, GRAPH_POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [docId, docStatus, updateDocument, loadGraphForDocument]);
 
   const handleGenerateFlashcards = async () => {
     setIsGenerating(true);
     try {
       const result = await api.generateFlashcards(docId);
       setGeneratedCount(result.count);
-      toast.success(`Created ${result.count} flashcard${result.count === 1 ? "" : "s"}`);
+      if (result.count > 0) {
+        toast.success(
+          `Created ${result.count} new flashcard${result.count === 1 ? "" : "s"}`
+        );
+      }
     } catch (error) {
       toast.error(getErrorMessage(error));
     } finally {
       setIsGenerating(false);
     }
   };
+
+  // A missing (or someone else's) document: one message, nothing to act on
+  if (loadError) {
+    return (
+      <div className="flex items-center justify-center py-24">
+        <div
+          role="alert"
+          className="card p-8 max-w-md w-full flex flex-col items-center gap-3 text-center"
+        >
+          <AlertCircle className="w-8 h-8 text-red-500" />
+          <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+            {notFound ? "Document not found" : "Could not load this document"}
+          </h1>
+          <p className="text-sm text-slate-600 dark:text-slate-400 break-words">
+            {notFound
+              ? "It may have been deleted, or it belongs to another account."
+              : loadError}
+          </p>
+          <div className="flex items-center gap-4 mt-2">
+            {!notFound && (
+              <Button variant="secondary" onClick={() => loadDocument(docId)}>
+                Retry
+              </Button>
+            )}
+            <Link
+              href="/documents"
+              className="text-sm font-medium text-primary-600 hover:text-primary-700"
+            >
+              Back to Documents
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -93,51 +110,76 @@ export default function ReadPage() {
             Adjust complexity and explore connected concepts
           </p>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <Button
-            onClick={handleGenerateFlashcards}
-            isLoading={isGenerating}
-            leftIcon={<GraduationCap className="w-4 h-4" />}
-          >
-            Generate flashcards
-          </Button>
-          {generatedCount !== null && (
-            <Link
-              href="/flashcards"
-              className="text-sm text-primary-600 hover:text-primary-700"
-            >
-              {generatedCount} flashcard{generatedCount === 1 ? "" : "s"} created. Review now
-            </Link>
-          )}
-        </div>
+        {docStatus && (
+          <div className="flex flex-col items-end gap-2">
+            {generatedCount === null ? (
+              <Button
+                onClick={handleGenerateFlashcards}
+                isLoading={isGenerating}
+                leftIcon={<GraduationCap className="w-4 h-4" />}
+              >
+                Generate flashcards
+              </Button>
+            ) : (
+              <>
+                <Link
+                  href="/flashcards"
+                  className="btn-primary inline-flex items-center gap-2"
+                >
+                  <GraduationCap className="w-4 h-4" />
+                  Review flashcards
+                </Link>
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  {generatedCount > 0
+                    ? `${generatedCount} new card${generatedCount === 1 ? "" : "s"} created.`
+                    : "Flashcards for this document already exist."}
+                </p>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main content area */}
         <div className="lg:col-span-2 space-y-6">
           {/* Document viewer */}
-          <DocumentViewer documentId={docId} />
+          {isCurrent && <DocumentViewer />}
 
-          {/* Knowledge graph */}
+          {/* Knowledge graph: waits for the document, whose status says
+              whether the graph is complete or still being built */}
           <div>
             <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
               Knowledge Graph
             </h2>
-            <KnowledgeGraph documentId={docId} className="h-[500px]" />
+            {docStatus ? (
+              <DocumentGraphPanel
+                docId={docId}
+                status={docStatus}
+                onDocumentUpdate={updateDocument}
+                className="h-[500px]"
+              />
+            ) : (
+              <div className="h-[500px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+                <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+              </div>
+            )}
           </div>
         </div>
 
         {/* Sidebar */}
-        <div className="space-y-4">
-          {/* Complexity slider */}
-          <ComplexitySlider />
+        {docStatus && (
+          <div className="space-y-4">
+            {/* Complexity slider */}
+            <ComplexitySlider />
 
-          {/* View mode toggle */}
-          <ViewModeToggle />
+            {/* View mode toggle */}
+            <ViewModeToggle />
 
-          {/* Node details */}
-          {selectedNodeId && <NodeDetails />}
-        </div>
+            {/* Node details */}
+            {selectedNodeId && <NodeDetails />}
+          </div>
+        )}
       </div>
     </div>
   );

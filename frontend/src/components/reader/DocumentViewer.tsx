@@ -1,15 +1,11 @@
 "use client";
 
-import { useEffect } from "react";
 import { useReadingStore } from "@/store";
 import { cn } from "@/utils/cn";
 import { Loader2, AlertCircle, FileText } from "lucide-react";
 
-interface DocumentViewerProps {
-  documentId: string;
-}
-
-export function DocumentViewer({ documentId }: DocumentViewerProps) {
+// Shows the reading store's document; the page loads it (loadDocument)
+export function DocumentViewer() {
   const {
     document,
     documentContent,
@@ -19,12 +15,7 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
     paraphrasedContent,
     isParaphrasing,
     paraphraseError,
-    loadDocument,
   } = useReadingStore();
-
-  useEffect(() => {
-    loadDocument(documentId);
-  }, [documentId, loadDocument]);
 
   if (isLoading) {
     return (

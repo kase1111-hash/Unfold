@@ -78,7 +78,12 @@ export default function FlashcardsPage() {
   const handleCardsCreated = useCallback(
     (count: number) => {
       setIsCreating(false);
-      toast.success(`Created ${count} flashcard${count === 1 ? "" : "s"}`);
+      // Generating again stores only cards that do not exist yet
+      if (count > 0) {
+        toast.success(`Created ${count} new flashcard${count === 1 ? "" : "s"}`);
+      } else {
+        toast("Flashcards for this document already exist");
+      }
       loadFlashcards();
     },
     [loadFlashcards]

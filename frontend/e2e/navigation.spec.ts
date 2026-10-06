@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, DOC1 } from "./fixtures";
 
 test.describe("Public pages", () => {
   test.use({ authenticated: false });
@@ -27,6 +27,18 @@ test.describe("Public pages", () => {
 
     await expect(page).toHaveURL(/\/register$/);
     await expect(page.getByRole("heading", { name: "Create Your Account" })).toBeVisible();
+  });
+
+  test("pages declare an icon that exists (no /favicon.ico 404)", async ({ page, request }) => {
+    await page.goto("/");
+
+    const icon = page.locator('head link[rel="icon"]');
+    await expect(icon).toHaveCount(1);
+    const href = await icon.getAttribute("href");
+    expect(href).toMatch(/^\/icon\.svg/);
+    const response = await request.get(href!);
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("image/svg+xml");
   });
 
   test("unknown routes return 404", async ({ page }) => {
@@ -58,7 +70,7 @@ test.describe("Dashboard", () => {
 
     await expect(page.getByRole("link", { name: /Marie Curie and Radioactivity/ })).toHaveAttribute(
       "href",
-      "/read/doc-1"
+      `/read/${DOC1}`
     );
     const listCall = api.callsTo("GET", "/documents/")[0];
     expect(listCall.query.get("page")).toBe("1");

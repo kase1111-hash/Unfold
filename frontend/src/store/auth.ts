@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { User } from "@/types";
-import { api } from "@/services/api";
+import { api, getErrorMessage, isUnauthorized } from "@/services/api";
 
 // "Authenticated" is simply `user !== null` once isInitialized is true. (It used
 // to be a JS getter in the state object, which zustand's set() flattens into a
@@ -11,6 +11,9 @@ interface AuthState {
   isLoading: boolean;
   isInitialized: boolean;
   error: string | null;
+  // Why the session could not be checked (429, 5xx, network); retryable, and
+  // the session is kept. isInitialized stays false meanwhile.
+  initError: string | null;
 
   // Actions
   login: (email: string, password: string) => Promise<void>;
@@ -25,6 +28,10 @@ interface AuthState {
   clearError: () => void;
 }
 
+// The check in flight, shared by concurrent callers (React runs mount effects
+// twice in development)
+let initPromise: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
@@ -32,6 +39,7 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isInitialized: false,
       error: null,
+      initError: null,
 
       login: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
@@ -80,35 +88,36 @@ export const useAuthStore = create<AuthState>()(
         });
       },
 
-      // Initialize auth state on app load - validates stored token
-      initializeAuth: async () => {
+      // Initialize auth state on app load - validates the session. Never throws.
+      initializeAuth: () => {
         // Skip if already initialized
-        if (get().isInitialized) return;
+        if (get().isInitialized) return Promise.resolve();
 
-        // Check if we have an access token stored
-        if (!api.isAuthenticated()) {
-          set({ isInitialized: true, user: null });
-          return;
-        }
-
-        set({ isLoading: true });
-        try {
-          // Validate the token by fetching current user
-          const user = await api.getCurrentUser();
-          set({
-            user,
-            isLoading: false,
-            isInitialized: true,
-          });
-        } catch {
-          // Token is invalid, clear stored state
-          api.clearTokens();
-          set({
-            user: null,
-            isLoading: false,
-            isInitialized: true,
-          });
-        }
+        initPromise ??= (async () => {
+          set({ isLoading: true, initError: null });
+          try {
+            // Without a stored access token the httpOnly refresh cookie may
+            // still hold a valid session: try it once before giving up
+            if (!api.isAuthenticated()) await api.refreshAccessToken();
+            // Validate the token by fetching the current user (a 401 is
+            // refreshed and retried by the API client)
+            const user = await api.getCurrentUser();
+            set({ user, isLoading: false, isInitialized: true });
+          } catch (error) {
+            if (isUnauthorized(error)) {
+              // No valid session, even after a refresh
+              api.clearTokens();
+              set({ user: null, isLoading: false, isInitialized: true });
+            } else {
+              // 429, 5xx or no connection: says nothing about the session, so
+              // keep the token and let the user retry
+              set({ isLoading: false, initError: getErrorMessage(error) });
+            }
+          } finally {
+            initPromise = null;
+          }
+        })();
+        return initPromise;
       },
 
       clearError: () => set({ error: null }),

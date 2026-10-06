@@ -57,8 +57,8 @@ function KnowledgeGraphInner({ documentId, className }: KnowledgeGraphProps) {
     selectedNodeId,
     hoveredNodeId,
     zoomLevel,
-    isBuilding,
-    buildError,
+    buildingDocIds,
+    buildError: lastBuildError,
     isExpanding,
     expandError,
     loadGraphForDocument,
@@ -71,6 +71,11 @@ function KnowledgeGraphInner({ documentId, className }: KnowledgeGraphProps) {
   } = useGraphStore();
 
   selectedNodeIdRef.current = selectedNodeId;
+
+  // Build state of this document only (a build of another one may be running)
+  const isBuilding = !!documentId && buildingDocIds.includes(documentId);
+  const buildError =
+    documentId && lastBuildError?.docId === documentId ? lastBuildError.message : null;
 
   // Load graph data when documentId changes (no document: all of the user's
   // documents). Each load replaces the previous graph, so nothing stale remains.

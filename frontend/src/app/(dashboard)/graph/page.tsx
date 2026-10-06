@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { KnowledgeGraph, NodeDetails } from "@/components/graph";
+import { useCallback, useEffect, useState } from "react";
+import { DocumentGraphPanel, KnowledgeGraph, NodeDetails } from "@/components/graph";
 import { useGraphStore } from "@/store";
 import { api, getErrorMessage } from "@/services/api";
 import { Loader2 } from "lucide-react";
@@ -15,6 +15,14 @@ export default function GraphPage() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const selectedDoc = documents.find((doc) => doc.doc_id === selectedDocId);
+
+  // A newer status of a document, found while its graph build was watched
+  const handleDocumentUpdate = useCallback((updated: Document) => {
+    setDocuments((docs) =>
+      docs.map((doc) => (doc.doc_id === updated.doc_id ? updated : doc))
+    );
+  }, []);
 
   useEffect(() => {
     api
@@ -76,15 +84,20 @@ export default function GraphPage() {
         <div className="lg:col-span-2">
           {/* Wait for the document list so the first document is loaded directly
               (instead of loading "All documents" first and then replacing it) */}
-          {documentsLoaded ? (
-            <KnowledgeGraph
-              documentId={selectedDocId || undefined}
-              className="h-[600px]"
-            />
-          ) : (
+          {!documentsLoaded ? (
             <div className="h-[600px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
               <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
             </div>
+          ) : selectedDoc ? (
+            // Shows "Building knowledge graph…" while its build is pending or running
+            <DocumentGraphPanel
+              docId={selectedDoc.doc_id}
+              status={selectedDoc.status}
+              onDocumentUpdate={handleDocumentUpdate}
+              className="h-[600px]"
+            />
+          ) : (
+            <KnowledgeGraph className="h-[600px]" />
           )}
         </div>
 

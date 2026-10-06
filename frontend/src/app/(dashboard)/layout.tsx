@@ -13,10 +13,12 @@ import {
   User,
   GraduationCap,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { useAuthStore } from "@/store";
 import { PageErrorBoundary } from "@/components/ErrorBoundary";
+import { Button } from "@/components/ui";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Home },
@@ -33,10 +35,12 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isInitialized, logout, initializeAuth } = useAuthStore();
+  const { user, isInitialized, isLoading, initError, logout, initializeAuth } =
+    useAuthStore();
 
-  // Validate the stored access token once on mount (initializeAuth never throws;
-  // it sets user=null + isInitialized=true when the token is missing/invalid).
+  // Validate the session once on mount (initializeAuth never throws; it sets
+  // user=null + isInitialized=true when there is no valid session, and
+  // initError when the check itself failed).
   useEffect(() => {
     initializeAuth();
   }, [initializeAuth]);
@@ -52,6 +56,33 @@ export default function DashboardLayout({
     await logout();
     router.replace("/login");
   };
+
+  // The session could not be checked (rate limited, server or network down):
+  // keep it and offer a retry instead of signing the user out
+  if (!isInitialized && initError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-4">
+        <div
+          role="alert"
+          className="card p-8 max-w-md w-full flex flex-col items-center gap-3 text-center"
+        >
+          <AlertCircle className="w-8 h-8 text-red-500" />
+          <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+            Could not check your session
+          </h1>
+          <p className="text-sm text-slate-600 dark:text-slate-400">{initError}</p>
+          <div className="flex items-center gap-4 mt-2">
+            <Button onClick={() => initializeAuth()} isLoading={isLoading}>
+              Retry
+            </Button>
+            <Link href="/login" className="text-sm text-primary-600 hover:text-primary-700">
+              Go to sign in
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Protected pages fire API calls on mount, so don't render them until the
   // stored token has been validated (and while redirecting to /login).

@@ -43,6 +43,18 @@ interface AccessTokenResponse {
   expires_in: number;
 }
 
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired. Please sign in again.";
+
+// Thrown instead of the refresh request's own error (e.g. 401 "Refresh token
+// required") when a 401 cannot be fixed by refreshing the token: the session is
+// over and the dashboard layout is already redirecting to /login.
+export class SessionExpiredError extends Error {
+  constructor() {
+    super(SESSION_EXPIRED_MESSAGE);
+    this.name = "SessionExpiredError";
+  }
+}
+
 class ApiClient {
   private client: AxiosInstance;
   private accessToken: string | null = null;
@@ -89,29 +101,24 @@ class ApiClient {
         ) {
           originalRequest._retry = true;
 
+          let newToken: AccessTokenResponse;
           try {
-            // Refresh token is sent automatically via httpOnly cookie
-            this.refreshPromise ??= this.refreshTokens()
-              .then((token) => {
-                this.setAccessToken(token.access_token);
-                return token;
-              })
-              .finally(() => {
-                this.refreshPromise = null;
-              });
-            const newToken = await this.refreshPromise;
-
-            // Retry original request
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
-            }
-            return this.client(originalRequest);
+            newToken = await this.refreshAccessToken();
           } catch (refreshError) {
-            // Refresh failed, clear tokens and let the auth store drop the user
+            // Only a rejected refresh (401) ends the session. A refresh that hit
+            // a 429, a 5xx or the network says nothing about the session: keep
+            // the token and let the caller show a retryable error.
+            if (!isUnauthorized(refreshError)) throw refreshError;
             this.clearTokens();
             this.authFailureHandler?.();
-            throw refreshError;
+            throw new SessionExpiredError();
           }
+
+          // Retry original request
+          if (originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
+          }
+          return this.client(originalRequest);
         }
 
         return Promise.reject(error);
@@ -196,6 +203,20 @@ class ApiClient {
     // Refresh token is sent automatically via httpOnly cookie
     const response = await this.client.post<AccessTokenResponse>("/auth/refresh", {});
     return response.data;
+  }
+
+  // Get a new access token from the refresh cookie and store it. Concurrent
+  // callers share one request (/auth/refresh is rate limited with login).
+  refreshAccessToken(): Promise<AccessTokenResponse> {
+    this.refreshPromise ??= this.refreshTokens()
+      .then((token) => {
+        this.setAccessToken(token.access_token);
+        return token;
+      })
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+    return this.refreshPromise;
   }
 
   async getCurrentUser(): Promise<User> {
@@ -380,11 +401,19 @@ class ApiClient {
 
   // Learning endpoints
 
-  // Generates cards from the caller's stored document text and saves them
+  // Generates cards from the caller's stored document text and saves the new
+  // ones: `flashcards` holds only newly stored cards (count may be 0), a card
+  // whose question already exists for this document is counted in
+  // duplicates_skipped instead.
   async generateFlashcards(
     documentId: string,
     numCards?: number
-  ): Promise<{ document_id: string; flashcards: Flashcard[]; count: number }> {
+  ): Promise<{
+    document_id: string;
+    flashcards: Flashcard[];
+    count: number;
+    duplicates_skipped: number;
+  }> {
     const response = await this.client.post("/learning/flashcards/generate", {
       document_id: documentId,
       num_cards: numCards,
@@ -692,6 +721,22 @@ class ApiClient {
 // Export singleton instance
 export const api = new ApiClient();
 
+// A 401 from the API: there is no valid session (also after a refresh was tried)
+export function isUnauthorized(error: unknown): boolean {
+  return (
+    error instanceof SessionExpiredError ||
+    (axios.isAxiosError(error) && error.response?.status === 401)
+  );
+}
+
+// The code of an app error ({detail: {code, message}}), e.g. "BUILD_IN_PROGRESS"
+export function getErrorCode(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+  const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+  const code = detail && typeof detail === "object" ? (detail as { code?: unknown }).code : null;
+  return typeof code === "string" ? code : null;
+}
+
 // Helper to extract error message
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
@@ -706,7 +751,13 @@ export function getErrorMessage(error: unknown): string {
       if (typeof message === "string" && message) return message;
     }
     if (!error.response) {
-      return "Cannot reach the server. Check your connection and try again.";
+      // Also what an unhandled 500 looks like cross-origin: it carries no CORS
+      // headers, so the browser hides the response
+      return "Could not reach the server, or it ran into an error. Please try again.";
+    }
+    if (error.response.status >= 500) {
+      // e.g. a plain-text "Internal Server Error" (same-origin deployment)
+      return "The server ran into an error. Please try again later.";
     }
     return error.message;
   }
