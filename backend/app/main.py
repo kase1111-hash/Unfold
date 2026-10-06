@@ -4,12 +4,15 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1 import router as api_v1_router
 from app.config import get_settings
 from app.db import (
+    GRAPH_UNAVAILABLE_ERRORS,
+    check_neo4j_connection,
     close_all_databases,
     init_postgres,
     init_neo4j,
@@ -44,7 +47,7 @@ async def lifespan(app: FastAPI):
     # Initialize PostgreSQL
     try:
         await init_postgres()
-        if settings.environment == "development":
+        if settings.environment in ("development", "test"):
             await create_tables()
         logger.info("PostgreSQL connected successfully")
     except Exception as e:
@@ -53,8 +56,13 @@ async def lifespan(app: FastAPI):
     # Initialize Neo4j
     try:
         await init_neo4j()
-        await create_neo4j_indexes()
-        logger.info("Neo4j connected successfully")
+        # The driver connects lazily, so verify before claiming success.
+        neo4j_status = await check_neo4j_connection()
+        if neo4j_status.get("connected"):
+            await create_neo4j_indexes()
+            logger.info("Neo4j connected successfully")
+        else:
+            logger.warning(f"Neo4j unavailable: {neo4j_status.get('message')}")
     except Exception as e:
         logger.warning(f"Neo4j connection failed: {e}")
 
@@ -99,6 +107,24 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(api_v1_router, prefix="/api/v1")
+
+
+async def graph_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map Neo4j connectivity failures to 503 instead of an unhandled 500."""
+    logger.warning(f"Graph database unavailable on {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "GRAPH_UNAVAILABLE",
+                "message": "The knowledge graph database is unavailable. Please try again later.",
+            }
+        },
+    )
+
+
+for _exc in GRAPH_UNAVAILABLE_ERRORS:
+    app.add_exception_handler(_exc, graph_unavailable_handler)
 
 
 @app.get("/", tags=["Root"])

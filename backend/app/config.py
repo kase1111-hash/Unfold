@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     app_name: str = "Unfold API"
     app_version: str = "0.1.0"
     debug: bool = False
-    environment: Literal["development", "staging", "production"] = "development"
+    environment: Literal["development", "test", "staging", "production"] = "development"
 
     # Server
     host: str = "0.0.0.0"

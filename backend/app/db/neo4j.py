@@ -9,9 +9,16 @@ from typing import Any
 # Neo4j is optional - allows portable builds without graph database
 try:
     from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-    from neo4j.exceptions import ServiceUnavailable, AuthError
+    from neo4j.exceptions import ServiceUnavailable, AuthError, SessionExpired
 
     NEO4J_AVAILABLE = True
+    # Errors meaning "the graph database can't be reached right now".
+    # Routes re-raise these and main.py maps them to 503 GRAPH_UNAVAILABLE.
+    GRAPH_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (
+        ServiceUnavailable,
+        SessionExpired,
+        AuthError,
+    )
 except ImportError:
     AsyncGraphDatabase = None  # type: ignore
     AsyncDriver = None  # type: ignore
@@ -19,6 +26,7 @@ except ImportError:
     ServiceUnavailable = Exception  # type: ignore
     AuthError = Exception  # type: ignore
     NEO4J_AVAILABLE = False
+    GRAPH_UNAVAILABLE_ERRORS = ()
 
 from app.config import get_settings
 

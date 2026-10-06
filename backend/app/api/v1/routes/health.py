@@ -29,7 +29,9 @@ class HealthStatus(BaseModel):
 class DetailedHealthStatus(HealthStatus):
     """Detailed health check with service status."""
 
-    services: dict[str, dict[str, str | bool]]
+    # int before bool: otherwise pydantic coerces vector_count 0/1 to bool
+    # and rejects any larger count.
+    services: dict[str, dict[str, str | int | bool]]
 
 
 @router.get("/health", response_model=HealthStatus)
