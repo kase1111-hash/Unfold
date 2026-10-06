@@ -80,7 +80,12 @@ services:
       - JWT_ALGORITHM=HS256
       - ENVIRONMENT=production
       - DEBUG=false
+      # Optional integrations (see .env.production.example)
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - CROSSREF_EMAIL=${CROSSREF_EMAIL:-}
+      - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY:-}
+      # Comma-separated list (a single URL or a JSON list also works)
       - CORS_ORIGINS=${CORS_ORIGINS:-https://unfold.example.com}
     depends_on:
       postgres:

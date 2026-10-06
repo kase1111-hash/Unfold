@@ -4,7 +4,8 @@
 # Web Framework
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
-python-multipart==0.0.9
+# >=0.0.18 fixes CVE-2024-53981 (per-byte log flood after the closing boundary)
+python-multipart==0.0.20
 
 # Data Validation
 pydantic==2.6.1

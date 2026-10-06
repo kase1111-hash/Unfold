@@ -139,7 +139,8 @@ Install `requirements-dev.txt`. Tests need PostgreSQL and drop/recreate the
 schema, so `DATABASE_URL` must point at a database whose name ends in `_test`
 (the default is `postgresql://test:test@localhost:5432/unfold_test`). Neo4j
 is optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI` is
-unreachable, and `requires_no_neo4j` tests run only then.
+unreachable, and `requires_no_neo4j` tests run only then (CI reruns them with
+`NEO4J_URI=bolt://localhost:7688`).
 ```bash
 cd backend && pytest                    # All tests
 cd backend && pytest tests/unit/        # Unit tests only
@@ -165,7 +166,7 @@ Copy `.env.example` files in backend and frontend directories. Key variables:
 
 - Never commit secrets or `.env` files
 - Use parameterized queries for Neo4j (allowlist validation in place)
-- Rate limiting: 60 req/min general, 10 req/min for auth endpoints, keyed on the
+- Rate limiting: 300 req/min general, 10 req/min for auth endpoints, keyed on the
   peer address (forwarding headers are only trusted via uvicorn's `FORWARDED_ALLOW_IPS`)
 - Production config enforces explicit secrets (no weak defaults or placeholders)
 - Every document, graph and flashcard route checks that the caller owns the data

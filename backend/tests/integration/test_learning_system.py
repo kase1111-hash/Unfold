@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 
 from app.db import get_session_context
 from app.db.models.document import DocumentORM
@@ -183,6 +183,7 @@ class TestFlashcardGeneration:
         body = response.json()
         assert body["document_id"] == uploaded_document["doc_id"]
         assert body["count"] == 2
+        assert body["duplicates_skipped"] == 0
         assert [c["answer"] for c in body["flashcards"]] == ["Marie Curie"] * 2
 
     def test_generated_cards_are_due_with_content(
@@ -290,6 +291,180 @@ class TestFlashcardGeneration:
         assert response.status_code == 422
         assert response.json()["detail"][0]["loc"] == loc
 
+    def test_no_transaction_held_during_generation(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        uploaded_document: dict,
+        monkeypatch,
+    ):
+        """The request's read transaction ends before the generator runs.
+
+        An LLM call can take up to a minute, and PostgreSQL closes
+        connections that sit idle in a transaction for 60 s.
+        """
+        generator = get_flashcard_generator()
+        original = generator.generate_flashcards
+        idle_in_transaction = []
+
+        async def generate_and_check(**kwargs):
+            async with get_session_context() as session:
+                result = await session.execute(
+                    text(
+                        "SELECT count(*) FROM pg_stat_activity "
+                        "WHERE datname = current_database() "
+                        "AND state LIKE 'idle in transaction%' "
+                        "AND pid <> pg_backend_pid()"
+                    )
+                )
+                idle_in_transaction.append(result.scalar())
+            return await original(**kwargs)
+
+        monkeypatch.setattr(generator, "generate_flashcards", generate_and_check)
+        response = client.post(
+            f"{learning}/flashcards/generate",
+            json={"document_id": uploaded_document["doc_id"]},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200, response.text
+        assert idle_in_transaction == [0]
+        assert response.json()["count"] == len(EXPECTED_CARDS)
+
+
+class TestFlashcardDeduplication:
+    """Generating again for a document does not store the same cards twice."""
+
+    def _generate(self, client, learning, headers, doc_id, **extra) -> dict:
+        response = client.post(
+            f"{learning}/flashcards/generate",
+            json={"document_id": doc_id, **extra},
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_regenerate_stores_no_duplicates(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        generated_cards: list[dict],
+        uploaded_document: dict,
+    ):
+        doc_id = uploaded_document["doc_id"]
+        again = self._generate(client, learning, auth_headers, doc_id)
+        assert again == {
+            "document_id": doc_id,
+            "flashcards": [],
+            "count": 0,
+            "duplicates_skipped": len(EXPECTED_CARDS),
+        }
+        listing = client.get(
+            f"{learning}/flashcards", params={"document_id": doc_id}, headers=auth_headers
+        ).json()
+        assert listing["total"] == len(EXPECTED_CARDS)
+        assert sorted(c["card_id"] for c in listing["flashcards"]) == sorted(
+            c["card_id"] for c in generated_cards
+        )
+        assert sorted(c["question"] for c in listing["flashcards"]) == sorted(
+            q for q, _ in EXPECTED_CARDS
+        )
+
+    def test_only_new_cards_are_returned(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        uploaded_document: dict,
+    ):
+        doc_id = uploaded_document["doc_id"]
+        first = self._generate(client, learning, auth_headers, doc_id, num_cards=2)
+        assert first["count"] == 2
+        assert first["duplicates_skipped"] == 0
+
+        second = self._generate(client, learning, auth_headers, doc_id)
+        assert second["count"] == len(EXPECTED_CARDS) - 2
+        assert second["duplicates_skipped"] == 2
+        assert [c["question"] for c in second["flashcards"]] == [
+            q for q, _ in EXPECTED_CARDS[2:]
+        ]
+        assert len(second["flashcards"]) == second["count"]
+
+        listing = client.get(f"{learning}/flashcards", headers=auth_headers).json()
+        assert sorted(c["question"] for c in listing["flashcards"]) == sorted(
+            q for q, _ in EXPECTED_CARDS
+        )
+
+    def test_manual_card_with_same_question_counts_as_existing(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        uploaded_document: dict,
+    ):
+        doc_id = uploaded_document["doc_id"]
+        manual = client.post(
+            f"{learning}/flashcards",
+            json={
+                "document_id": doc_id,
+                "question": EXPECTED_CARDS[0][0],
+                "answer": "Marie Curie",
+            },
+            headers=auth_headers,
+        )
+        assert manual.status_code == 201
+
+        body = self._generate(client, learning, auth_headers, doc_id)
+        assert body["count"] == len(EXPECTED_CARDS) - 1
+        assert body["duplicates_skipped"] == 1
+        assert EXPECTED_CARDS[0][0] not in [c["question"] for c in body["flashcards"]]
+
+    def test_same_questions_on_another_document_are_stored(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        learning: str,
+        auth_headers: dict,
+        generated_cards: list[dict],
+    ):
+        """Duplicates are per user and document."""
+        pdf = make_text_pdf([*DEFAULT_LINES, f"Ref {uuid.uuid4().hex[:8]}"])
+        upload = client.post(
+            f"{api_prefix}/documents/upload",
+            files={"file": ("curie2.pdf", pdf, "application/pdf")},
+            headers=auth_headers,
+        )
+        assert upload.status_code == 201
+        other_doc = upload.json()["document"]["doc_id"]
+
+        body = self._generate(client, learning, auth_headers, other_doc)
+        assert body["count"] == len(EXPECTED_CARDS)
+        assert body["duplicates_skipped"] == 0
+
+    def test_duplicates_within_one_generation_are_skipped(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        uploaded_document: dict,
+        monkeypatch,
+    ):
+        async def repeated(**kwargs):
+            card = {"question": "What did Curie discover?", "answer": "Radium"}
+            return [dict(card), dict(card), {"question": "Who?", "answer": "Curie"}]
+
+        monkeypatch.setattr(get_flashcard_generator(), "generate_flashcards", repeated)
+        body = self._generate(
+            client, learning, auth_headers, uploaded_document["doc_id"]
+        )
+        assert [c["question"] for c in body["flashcards"]] == [
+            "What did Curie discover?",
+            "Who?",
+        ]
+        assert body["count"] == 2
+        assert body["duplicates_skipped"] == 1
+
 
 class TestFlashcardReview:
     """POST /learning/flashcards/review applies SM2 to the stored card."""
@@ -381,6 +556,39 @@ class TestFlashcardReview:
         assert response.json()["repetitions"] == 0
         assert response.json()["interval_days"] == 1
         assert response.json()["retention_rate"] == 0.0
+
+    def test_repeated_perfect_reviews_cap_the_interval(
+        self,
+        client: TestClient,
+        learning: str,
+        auth_headers: dict,
+        generated_cards: list[dict],
+    ):
+        """Back-to-back early reviews compound the interval; the 14th used
+        to overflow the next-review date and return 500."""
+        card_id = generated_cards[0]["card_id"]
+        intervals = []
+        for _ in range(16):
+            response = client.post(
+                f"{learning}/flashcards/review",
+                json={"card_id": card_id, "quality": 5},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200, response.text
+            intervals.append(response.json()["interval_days"])
+
+        assert intervals[:3] == [1, 6, 17]
+        assert intervals == sorted(intervals)
+        assert max(intervals) == 36500
+        assert intervals[-3:] == [36500, 36500, 36500]
+        next_review = datetime.fromisoformat(response.json()["next_review"])
+        expected = datetime.now(timezone.utc) + timedelta(days=36500)
+        assert abs(next_review - expected) < timedelta(minutes=5)
+
+        stored = client.get(f"{learning}/flashcards", headers=auth_headers).json()
+        [card] = [c for c in stored["flashcards"] if c["card_id"] == card_id]
+        assert card["interval_days"] == 36500
+        assert card["repetitions"] == 16
 
     def test_review_unknown_card_returns_404(
         self, client: TestClient, learning: str, auth_headers: dict
@@ -702,6 +910,28 @@ class TestSM2Algorithm:
         assert state.total_reviews == 1
         assert state.correct_reviews == 1
 
+    def test_interval_is_capped(self):
+        from app.services.learning.sm2 import (
+            MAX_INTERVAL_DAYS,
+            CardReviewState,
+            ResponseQuality,
+            apply_review,
+        )
+
+        assert MAX_INTERVAL_DAYS == 36500
+        # An interval stored before the cap existed is brought back down.
+        state = CardReviewState(
+            card_id="c", easiness_factor=2.5, interval=2_900_240, repetitions=13
+        )
+        apply_review(state, ResponseQuality.PERFECT)
+        assert state.interval == 36500
+        assert state.next_review - datetime.now(timezone.utc) <= timedelta(days=36500)
+
+        # A failed review still resets the card.
+        apply_review(state, ResponseQuality.BLACKOUT)
+        assert state.interval == 1
+        assert state.repetitions == 0
+
     def test_days_until_due_rounds_up(self):
         """A card due in 23 hours is due in 1 day, not 0."""
         from app.services.learning.sm2 import CardReviewState
@@ -1022,3 +1252,80 @@ class TestFocusMode:
             json={"sections": [{"id": "s1", "content": "x"}], "learning_goal": "physics"},
         )
         assert response.status_code == 401
+
+
+class TestRankPassages:
+    """POST /learning/relevance/rank is bounded and runs off the event loop."""
+
+    def test_ranks_passages(self, client: TestClient, learning: str, auth_headers: dict):
+        response = client.post(
+            f"{learning}/relevance/rank",
+            json={
+                "passages": [
+                    "Bread rises because yeast produces gas.",
+                    "Radioactivity was studied by Marie Curie.",
+                ],
+                "query": "radioactivity research",
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        ranked = response.json()["ranked_passages"]
+        assert [p["index"] for p in ranked] == [1, 0]
+
+    def test_too_many_passages_returns_422(
+        self, client: TestClient, learning: str, auth_headers: dict
+    ):
+        from app.api.v1.routes.learning import MAX_RANK_PASSAGES
+
+        assert MAX_RANK_PASSAGES == 500
+        response = client.post(
+            f"{learning}/relevance/rank",
+            json={"passages": ["some passage text"] * 501, "query": "passage"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["loc"] == ["body", "passages"]
+
+    def test_max_passages_accepted(
+        self, client: TestClient, learning: str, auth_headers: dict
+    ):
+        response = client.post(
+            f"{learning}/relevance/rank",
+            json={
+                "passages": ["some passage text"] * 500,
+                "query": "passage",
+                "top_k": 3,
+            },
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert len(response.json()["ranked_passages"]) == 3
+
+    def test_scoring_runs_in_a_worker_thread(
+        self, client: TestClient, learning: str, auth_headers: dict, monkeypatch
+    ):
+        import asyncio
+
+        from app.services.learning import get_relevance_scorer
+
+        scorer = get_relevance_scorer()
+        original = scorer.rank_passages
+        on_event_loop = []
+
+        def rank_and_check(**kwargs):
+            try:
+                asyncio.get_running_loop()
+                on_event_loop.append(True)
+            except RuntimeError:
+                on_event_loop.append(False)
+            return original(**kwargs)
+
+        monkeypatch.setattr(scorer, "rank_passages", rank_and_check)
+        response = client.post(
+            f"{learning}/relevance/rank",
+            json={"passages": ["first passage", "second passage"], "query": "passage"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert on_event_loop == [False]

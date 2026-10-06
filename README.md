@@ -192,12 +192,30 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your configuration
 
-# Initialize database
-python -c "from app.db import create_tables; import asyncio; asyncio.run(create_tables())"
-
-# Run the server
+# Run the server. With ENVIRONMENT=development it creates the database
+# tables at startup; production/staging use migrations (alembic upgrade head).
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+### Upgrading an existing dev database
+
+Flashcards used to live in memory; they are now stored in PostgreSQL, and the
+schema is managed by Alembic. A development database created by an earlier
+version still has the old `flashcards` table, because the dev server's
+`create_tables` never alters existing tables. Every flashcard route then
+returns 500, and `alembic upgrade head` fails because the tables already
+exist. That table never held data, so drop it, let the backend recreate it,
+and record the schema as current:
+
+```bash
+docker compose exec postgres psql -U postgres -d unfold -c 'DROP TABLE flashcards'
+docker compose restart backend          # the dev server recreates the table
+docker compose exec backend alembic stamp head
+```
+
+A database whose tables were created by the dev server (`ENVIRONMENT=development`)
+must be stamped (`alembic stamp head`), not upgraded; later migrations then
+apply with `alembic upgrade head` (`make db-migrate`).
 
 ### Frontend Setup
 
@@ -243,8 +261,11 @@ JWT_EXPIRATION_MINUTES=30
 # AI Services (optional)
 OPENAI_API_KEY=your-openai-key
 
-# CORS (comma-separated)
-CORS_ORIGINS=http://localhost:3000
+# CORS (comma-separated list, a single URL, or a JSON list)
+CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+# Rate limiting per client IP (auth endpoints: 10 requests/min)
+RATE_LIMIT_REQUESTS_PER_MINUTE=300
 ```
 
 In production and staging the backend refuses to start with a missing or
@@ -618,7 +639,8 @@ runs against, so `DATABASE_URL` must name a database ending in `_test`
 (default: `postgresql://test:test@localhost:5432/unfold_test`). Neo4j is
 optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI` is not
 reachable, and tests marked `requires_no_neo4j` (the 503 paths) run only then.
-CI runs with both services.
+CI runs the suite with both services, then runs the `requires_no_neo4j` tests
+again with `NEO4J_URI` pointing at an unused port.
 
 ```bash
 cd backend
@@ -647,11 +669,11 @@ pytest tests/integration/test_document_flow.py
 ```bash
 cd frontend
 
-# Install Playwright browsers
-npx playwright install
+# Install the Playwright browser (the suite runs on Chromium)
+npx playwright install chromium
 
-# Run all E2E tests
-npm run test:e2e
+# Run all E2E tests (as CI does)
+npm run test:e2e -- --project=chromium
 
 # Run specific test file
 npx playwright test e2e/auth.spec.ts
@@ -673,13 +695,13 @@ The test suite includes:
 - Knowledge graph building, queries and the Neo4j-down (503) path
 - Flashcard generation, persistence and SM2 scheduling
 
-**Frontend E2E Tests:**
-- Navigation and routing
-- Authentication flow
-- Document management
-- Accessibility checks
-- Responsive design
-- Performance benchmarks
+**Frontend E2E Tests** (Chromium, against a mocked API; `frontend/e2e/`):
+- Authentication (`auth.spec.ts`)
+- Documents and upload (`documents.spec.ts`)
+- Reader (`reader.spec.ts`)
+- Knowledge graph (`graph.spec.ts`)
+- Flashcards and review (`flashcards.spec.ts`)
+- Navigation (`navigation.spec.ts`)
 
 ## Deployment
 
@@ -687,7 +709,8 @@ The test suite includes:
 
 - **Development:** `docker compose up -d` starts the backend (port 8000),
   PostgreSQL, Neo4j and Redis using `docker-compose.yml` and `.env`
-  (copy `.env.example`). Run the frontend with `npm run dev`.
+  (copy `.env.example`). Their ports are published on 127.0.0.1 only. Run
+  the frontend with `npm run dev`.
 - **Production:** `docker-compose.prod.yml` adds nginx (TLS, `/api/` routed to
   the backend) and the frontend, and runs `alembic upgrade head` before the API
   starts. Secrets are required:

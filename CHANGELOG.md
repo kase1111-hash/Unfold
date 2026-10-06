@@ -19,6 +19,13 @@ repetition (see REFOCUS_PLAN.md).
   `DELETE /api/v1/learning/flashcards/{card_id}`; `flashcards/generate` takes a
   `document_id` and reads the document text server-side.
 - `backend/requirements-dev.txt` for test and lint tools.
+- A document's status is `processing` while its graph is being built, then
+  `indexed`; it returns to `validated` if the build fails or Neo4j is down.
+  `POST /api/v1/graph/documents/{doc_id}/build` returns 409
+  `BUILD_IN_PROGRESS` while a build of that document is running.
+- `flashcards/generate` skips cards whose question the user already has for
+  that document and reports them in `duplicates_skipped`; `flashcards` and
+  `count` cover only the newly stored cards (`count` may be 0).
 
 ### Changed
 - Flashcards and their SM2 review state are stored per user in PostgreSQL
@@ -48,6 +55,28 @@ repetition (see REFOCUS_PLAN.md).
   `changeme` everywhere. Neo4j applies `NEO4J_AUTH` only when its data volume
   is created, so for an existing `neo4j-data` volume either reset the password
   or recreate the volume (`docker compose down -v` deletes all local data).
+- Existing dev databases keep the old, empty `flashcards` table: drop it,
+  restart the backend, then run `alembic stamp head` (see "Upgrading an
+  existing dev database" in the README). Databases whose tables the dev
+  server created must be stamped, not upgraded.
+- The default general rate limit is 300 requests/min per client IP (was 60,
+  which an ordinary 50-card review session exceeded); auth endpoints stay at
+  10/min.
+- `GET /api/v1/graph/nodes` accepts `limit` up to 1000 and returns nodes in a
+  deterministic order.
+- `/learning/relevance/rank` accepts at most 500 passages (422 above that) and
+  scores them in a worker thread instead of on the event loop.
+- `/health/detailed` reports unavailable services with generic messages; the
+  underlying errors are logged instead of returned.
+- The dev `docker-compose.yml` publishes its ports on 127.0.0.1 only. The prod
+  compose file forwards `ANTHROPIC_API_KEY`, `CROSSREF_EMAIL` and
+  `SEMANTIC_SCHOLAR_API_KEY`; the unused `POSTHOG_*` settings are gone from
+  `.env.production.example`.
+- CI reruns the `requires_no_neo4j` tests (the 503 paths) with Neo4j
+  unreachable. The security job scans the lowercase image name, logs in to
+  GHCR first and has the permissions the SARIF upload needs.
+- The frontend follows the new `processing` status and the
+  `BUILD_IN_PROGRESS` and `duplicates_skipped` responses.
 
 ### Fixed
 - Backend CI: installable requirements (pytest-asyncio, bcrypt pins), the
@@ -61,6 +90,28 @@ repetition (see REFOCUS_PLAN.md).
 - `/health/detailed` no longer fails once FAISS holds 2 or more vectors;
   deleted FAISS vectors are no longer returned by search.
 - Zotero export accepts a numeric `year`.
+- `CORS_ORIGINS` as a comma-separated list or a single URL (the form used by
+  the example env files and the prod compose default) no longer stops the
+  backend and `alembic` from starting; a JSON list still works.
+- Reviewing a card again before it is due no longer overflows its next-review
+  date and returns 500 (the SM-2 interval is capped at 36500 days).
+- `flashcards/generate` ends its read transaction before generating, so a
+  slow LLM call no longer holds a connection idle in a transaction
+  (PostgreSQL closes those after 60 s).
+- Uploads over the size limit get 413 `FILE_TOO_LARGE` even when sent chunked
+  (no `Content-Length`); a PDF whose extracted text exceeds the cap gets 400
+  `DOCUMENT_TOO_LARGE`.
+- Graph node and relation `metadata` must be a flat object of primitives or
+  arrays of primitives (422 otherwise, instead of a 500), and graph errors no
+  longer include raw driver text.
+
+### Security
+- Unauthenticated log flood and CPU use on `/documents/upload`
+  (python-multipart CVE-2024-53981): python-multipart is upgraded to 0.0.20
+  and its loggers only report errors.
+- Scholar annotations: only the author can edit or delete an annotation or
+  change its visibility, and another user's private annotation is reported as
+  not found (reactions included).
 
 ### Removed
 - Ethics module and `/api/v1/ethics/*` endpoints, EPUB ingestion, Pinecone and

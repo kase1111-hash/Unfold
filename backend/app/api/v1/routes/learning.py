@@ -3,6 +3,7 @@ Learning API routes for Phase 4 features.
 Includes flashcards, spaced repetition, engagement tracking, and exports.
 """
 
+import asyncio
 import uuid
 from typing import Optional
 
@@ -32,6 +33,10 @@ from app.services.learning.flashcards import to_card_difficulty
 
 router = APIRouter(prefix="/learning", tags=["learning"])
 
+# Upper bound on passages per /relevance/rank request. Scoring is CPU-bound
+# and linear in the number of passages.
+MAX_RANK_PASSAGES = 500
+
 
 # ============== Pydantic Models ==============
 
@@ -48,7 +53,7 @@ class RelevanceRequest(BaseModel):
 class RankPassagesRequest(BaseModel):
     """Request to rank multiple passages."""
 
-    passages: list[str] = Field(..., min_length=1)
+    passages: list[str] = Field(..., min_length=1, max_length=MAX_RANK_PASSAGES)
     query: str = Field(..., min_length=3)
     top_k: Optional[int] = Field(default=None, ge=1)
 
@@ -153,9 +158,13 @@ async def rank_passages(
 ):
     """
     Rank multiple passages by relevance to a query.
+
+    Scoring runs in a worker thread so a large request does not block the
+    event loop (and with it every other request).
     """
     scorer = get_relevance_scorer()
-    results = scorer.rank_passages(
+    results = await asyncio.to_thread(
+        scorer.rank_passages,
         passages=request.passages,
         query=request.query,
         top_k=request.top_k,
@@ -258,11 +267,20 @@ async def generate_flashcards(
 
     Uses LLM-based question synthesis when an API key is configured and
     rule-based extraction otherwise. New cards are due for review at once.
+
+    A generated card whose question the caller already has for this
+    document is skipped, so generating again does not store duplicates.
+    ``flashcards`` holds only the newly stored cards (``count`` may be 0)
+    and ``duplicates_skipped`` says how many were skipped.
     """
     await get_owned_document(db, request.document_id, current_user)
     content = await DocumentRepository(db).get_content(
         request.document_id, owner_id=current_user.user_id
     )
+    # End the read transaction before the (possibly slow) LLM call, so no
+    # connection sits idle in a transaction meanwhile; PostgreSQL closes
+    # those after 60 s. The inserts below run in a new transaction.
+    await db.commit()
     if not content or not content.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -279,18 +297,29 @@ async def generate_flashcards(
         difficulty=request.difficulty,
         context=request.context,
     )
-    new_cards = [
+    valid_cards = [
         fields
         for fields in map(_generated_card_fields, generated[: request.num_cards])
         if fields is not None
     ]
-    cards = await FlashcardRepository(db).create_many(
+
+    repo = FlashcardRepository(db)
+    seen = await repo.existing_questions(current_user.user_id, request.document_id)
+    new_cards = []
+    for fields in valid_cards:
+        if fields["question"] in seen:
+            continue
+        seen.add(fields["question"])
+        new_cards.append(fields)
+
+    cards = await repo.create_many(
         current_user.user_id, request.document_id, new_cards
     )
     return {
         "document_id": request.document_id,
         "flashcards": [_card_response(card) for card in cards],
         "count": len(cards),
+        "duplicates_skipped": len(valid_cards) - len(new_cards),
     }
 
 

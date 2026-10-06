@@ -1,4 +1,7 @@
-"""Tests for the production checks in Settings."""
+"""Tests for the production checks and env parsing in Settings."""
+
+import re
+from pathlib import Path
 
 import pytest
 
@@ -31,6 +34,7 @@ def _clean_env(monkeypatch):
         "DATABASE_URL",
         "NEO4J_USER",
         "NEO4J_PASSWORD",
+        "CORS_ORIGINS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -107,4 +111,99 @@ class TestNonProductionDefaults:
         assert len(settings.jwt_secret) >= 32
         assert str(settings.database_url) == (
             "postgresql://postgres:postgres@localhost:5432/unfold"
+        )
+
+
+# The repository root (backend/tests/unit/test_config.py -> repo root).
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _env_file_value(path: Path, key: str) -> str:
+    """The value assigned to ``key`` in a KEY=value env file."""
+    for line in path.read_text().splitlines():
+        if line.startswith(f"{key}="):
+            return line.split("=", 1)[1]
+    raise AssertionError(f"{key} not found in {path}")
+
+
+def _compose_default(path: Path, key: str) -> str:
+    """The ``${KEY:-default}`` default used in a compose file."""
+    match = re.search(r"\$\{" + key + r":-([^}]*)\}", path.read_text())
+    assert match, f"no ${{{key}:-...}} default in {path}"
+    return match.group(1)
+
+
+def _assert_origin_list(origins, raw: str) -> None:
+    assert isinstance(origins, list)
+    assert origins, "expected at least one origin"
+    for origin in origins:
+        assert isinstance(origin, str)
+        assert origin.startswith(("http://", "https://"))
+        assert "," not in origin and origin == origin.strip()
+    assert ",".join(origins) == raw.replace(" ", "")
+
+
+class TestCorsOrigins:
+    """CORS_ORIGINS must load in every form the docs and examples use.
+
+    pydantic-settings 2.1 JSON-decodes list fields from the environment
+    before validators run, so anything but a JSON list used to raise
+    SettingsError and stop the app (and alembic) from starting.
+    """
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("http://a.example,http://b.example", ["http://a.example", "http://b.example"]),
+            ("a,b", ["a", "b"]),
+            ("http://localhost:3000", ["http://localhost:3000"]),
+            ('["http://a.example", "http://b.example"]', ["http://a.example", "http://b.example"]),
+            (" http://a.example , ,http://b.example, ", ["http://a.example", "http://b.example"]),
+        ],
+    )
+    def test_env_value_forms(self, monkeypatch, raw, expected):
+        monkeypatch.setenv("CORS_ORIGINS", raw)
+        settings = Settings(_env_file=None, environment="development")
+        assert settings.cors_origins == expected
+
+    def test_default(self):
+        settings = Settings(_env_file=None, environment="development")
+        assert settings.cors_origins == ["http://localhost:3000"]
+
+    def test_list_passed_directly(self):
+        settings = Settings(
+            _env_file=None, environment="development", cors_origins=["http://x.example"]
+        )
+        assert settings.cors_origins == ["http://x.example"]
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            pytest.param(
+                lambda: _env_file_value(REPO_ROOT / ".env.production.example", "CORS_ORIGINS"),
+                id=".env.production.example",
+            ),
+            pytest.param(
+                lambda: _compose_default(REPO_ROOT / "docker-compose.prod.yml", "CORS_ORIGINS"),
+                id="docker-compose.prod.yml default",
+            ),
+            pytest.param(
+                lambda: _env_file_value(REPO_ROOT / "backend" / ".env.example", "CORS_ORIGINS"),
+                id="backend/.env.example",
+            ),
+        ],
+    )
+    def test_shipped_values_load_in_production(self, monkeypatch, source):
+        """The prod compose stack passes these through the environment."""
+        raw = source()
+        monkeypatch.setenv("CORS_ORIGINS", raw)
+        settings = make_settings()
+        _assert_origin_list(settings.cors_origins, raw)
+
+    def test_backend_env_example_loads_as_dotenv(self):
+        """``cp backend/.env.example backend/.env`` must give working settings."""
+        env_file = REPO_ROOT / "backend" / ".env.example"
+        settings = Settings(_env_file=env_file)
+        _assert_origin_list(
+            settings.cors_origins, _env_file_value(env_file, "CORS_ORIGINS")
         )

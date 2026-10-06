@@ -70,6 +70,24 @@ class FlashcardRepository:
         await self.session.flush()
         return [self._to_model(card_orm) for card_orm in cards_orm]
 
+    async def existing_questions(self, user_id: str, document_id: str) -> set[str]:
+        """Questions of the user's cards for one document.
+
+        Args:
+            user_id: Owner of the cards
+            document_id: Source document
+
+        Returns:
+            Set of question texts
+        """
+        result = await self.session.execute(
+            select(FlashcardORM.question).where(
+                FlashcardORM.user_id == user_id,
+                FlashcardORM.document_id == document_id,
+            )
+        )
+        return set(result.scalars().all())
+
     async def get(
         self, card_id: str, user_id: str, for_update: bool = False
     ) -> Flashcard | None:

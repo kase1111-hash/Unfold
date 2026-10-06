@@ -257,7 +257,7 @@ The suite needs PostgreSQL and drops/recreates the schema of the database it
 runs against, so it refuses to start unless the database name ends in `_test`.
 Neo4j is optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI`
 is unreachable (those marked `requires_no_neo4j` run only then). CI runs with
-both.
+both, then reruns the `requires_no_neo4j` tests with Neo4j unreachable.
 
 ```bash
 cd backend
@@ -293,11 +293,11 @@ pytest tests/integration/test_document_flow.py
 ```bash
 cd frontend
 
-# Install Playwright browsers (first time)
-npx playwright install
+# Install the Playwright browser (first time; the suite runs on Chromium)
+npx playwright install chromium
 
-# Run E2E tests
-npm run test:e2e
+# Run E2E tests (as CI does)
+npm run test:e2e -- --project=chromium
 
 # Run with UI
 npm run test:e2e:ui

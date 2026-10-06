@@ -67,6 +67,11 @@ MIN_EF = 1.3
 # Initial intervals for new cards (in days)
 INITIAL_INTERVALS = [1, 6]  # First review after 1 day, second after 6 days
 
+# Longest interval (about 100 years). Without a cap, repeated reviews of a
+# card that is not yet due compound the interval until now + interval no
+# longer fits in a datetime (OverflowError after ~13 perfect reviews).
+MAX_INTERVAL_DAYS = 36500
+
 
 def apply_review(
     state: CardReviewState,
@@ -116,6 +121,7 @@ def apply_review(
             # I(n) = I(n-1) * EF
             state.interval = round(state.interval * state.easiness_factor)
 
+        state.interval = min(state.interval, MAX_INTERVAL_DAYS)
         state.repetitions += 1
 
     # Schedule next review

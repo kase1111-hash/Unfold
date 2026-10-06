@@ -79,7 +79,7 @@ test-backend-cov:
 	cd backend && pytest --cov=app --cov-report=html -v
 
 test-e2e:
-	cd frontend && npm run test:e2e
+	cd frontend && npm run test:e2e -- --project=chromium
 
 test-e2e-ui:
 	cd frontend && npm run test:e2e:ui

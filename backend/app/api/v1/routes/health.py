@@ -1,5 +1,6 @@
 """Health check endpoints."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Literal
 
@@ -15,6 +16,30 @@ from app.db import (
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# Messages shown for a service that is not connected. The checks' own
+# messages carry raw driver/exception text (hosts, ports, resolved
+# addresses), and /health/detailed needs no authentication, so that text
+# is logged instead of returned.
+_UNAVAILABLE_MESSAGES = {
+    "postgresql": "PostgreSQL is unavailable",
+    "neo4j": "Neo4j is unavailable",
+    "vector_store": "Vector store is unavailable",
+}
+
+
+def _public_status(service: str, result: dict) -> dict:
+    """The check result, with a generic message if the service is down."""
+    if result.get("connected", False):
+        return result
+    logger.warning(
+        "Health check: %s not connected (status=%s): %s",
+        service,
+        result.get("status"),
+        result.get("message"),
+    )
+    return {**result, "message": _UNAVAILABLE_MESSAGES[service]}
 
 
 class HealthStatus(BaseModel):
@@ -72,13 +97,15 @@ async def detailed_health_check() -> DetailedHealthStatus:
     services = {}
 
     # Check PostgreSQL
-    services["postgresql"] = await _check_postgresql()
+    services["postgresql"] = _public_status("postgresql", await _check_postgresql())
 
     # Check Neo4j
-    services["neo4j"] = await _check_neo4j()
+    services["neo4j"] = _public_status("neo4j", await _check_neo4j())
 
     # Check Vector Store
-    services["vector_store"] = await _check_vector_store()
+    services["vector_store"] = _public_status(
+        "vector_store", await _check_vector_store()
+    )
 
     # Determine overall status
     all_healthy = all(svc.get("connected", False) for svc in services.values())

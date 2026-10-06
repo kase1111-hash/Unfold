@@ -30,6 +30,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# The multipart parser runs before authentication and logs a WARNING for
+# malformed input; python-multipart 0.0.9 logged one per byte after the
+# closing boundary, so one unauthenticated request could write gigabytes of
+# logs. Keep only its errors. 0.0.20 logs as "python_multipart"; "multipart"
+# is the old import name.
+for _multipart_logger in ("multipart", "python_multipart"):
+    logging.getLogger(_multipart_logger).setLevel(logging.ERROR)
+
 settings = get_settings()
 
 # Set log level based on environment

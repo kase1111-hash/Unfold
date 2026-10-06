@@ -1,5 +1,9 @@
 # Unfold Development Docker Compose
 # Usage: cp .env.example .env && docker-compose up -d
+#
+# Published ports are bound to 127.0.0.1: the databases use well-known dev
+# passwords (Redis has none), and Docker-published ports bypass host
+# firewalls such as ufw.
 
 version: "3.9"
 
@@ -11,7 +15,7 @@ services:
       dockerfile: Dockerfile
     container_name: unfold-backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-unfold}
       - NEO4J_URI=bolt://neo4j:7687
@@ -36,7 +40,7 @@ services:
     image: postgres:15-alpine
     container_name: unfold-postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-postgres}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
@@ -57,8 +61,8 @@ services:
     image: neo4j:5.17-community
     container_name: unfold-neo4j
     ports:
-      - "7474:7474"  # HTTP
-      - "7687:7687"  # Bolt
+      - "127.0.0.1:7474:7474"  # HTTP
+      - "127.0.0.1:7687:7687"  # Bolt
     environment:
       # The image requires the admin user to be "neo4j". The password only
       # applies when the neo4j-data volume is first created.
@@ -81,7 +85,7 @@ services:
     image: redis:7-alpine
     container_name: unfold-redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
