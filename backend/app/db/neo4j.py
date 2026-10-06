@@ -29,6 +29,7 @@ except ImportError:
     GRAPH_UNAVAILABLE_ERRORS = ()
 
 from app.config import get_settings
+from app.models.graph import NodeType
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -72,6 +73,13 @@ ALLOWED_RELATIONSHIP_TYPES = frozenset({
     "PRECEDES",
     "FOLLOWS",
 })
+
+
+# Labels the app writes (one per NodeType). node_id lookups match on this
+# label expression so Neo4j can use the per-label node_id indexes created in
+# create_indexes() instead of scanning every node in the database.
+NODE_LABELS = tuple(t.value for t in NodeType)
+_NODE_LABEL_EXPR = "|".join(NODE_LABELS)
 
 
 class Neo4jValidationError(ValueError):
@@ -320,8 +328,8 @@ async def create_relationship(
 
     Args:
         session: Neo4j session
-        source_id: Source node element ID
-        target_id: Target node element ID
+        source_id: Source node's node_id property
+        target_id: Target node's node_id property
         rel_type: Relationship type (EXPLAINS, CITES, etc.) - validated against allowlist
         properties: Optional relationship properties
 
@@ -339,8 +347,8 @@ async def create_relationship(
 
     props = properties or {}
     query = f"""
-    MATCH (a), (b)
-    WHERE elementId(a) = $source_id AND elementId(b) = $target_id
+    MATCH (a:{_NODE_LABEL_EXPR} {{node_id: $source_id}}),
+          (b:{_NODE_LABEL_EXPR} {{node_id: $target_id}})
     CREATE (a)-[r:{validated_type} $props]->(b)
     RETURN r, elementId(r) as id
     """
@@ -357,11 +365,11 @@ async def get_node_by_id(
     session: "AsyncSession | None",
     node_id: str,
 ) -> dict[str, Any] | None:
-    """Get a node by its element ID.
+    """Get a node by its node_id property (the public node identifier).
 
     Args:
         session: Neo4j session
-        node_id: Node element ID
+        node_id: Node's node_id property
 
     Returns:
         Node data or None if not found or neo4j not available
@@ -369,10 +377,10 @@ async def get_node_by_id(
     if session is None:
         return None
 
-    query = """
-    MATCH (n)
-    WHERE elementId(n) = $node_id
+    query = f"""
+    MATCH (n:{_NODE_LABEL_EXPR} {{node_id: $node_id}})
     RETURN n, labels(n) as labels, elementId(n) as id
+    LIMIT 1
     """
     result = await session.run(query, node_id=node_id)
     record = await result.single()
@@ -396,7 +404,8 @@ async def search_nodes(
     Args:
         session: Neo4j session
         label: Optional node label filter (validated against allowlist)
-        properties: Optional property filters
+        properties: Optional property filters; a list value matches any of
+            its items (``n.key IN [...]``)
         limit: Maximum results
 
     Returns:
@@ -419,7 +428,8 @@ async def search_nodes(
     if properties:
         for i, (key, value) in enumerate(properties.items()):
             param_name = f"prop_{i}"
-            where_clauses.append(f"n.{key} = ${param_name}")
+            op = "IN" if isinstance(value, (list, tuple)) else "="
+            where_clauses.append(f"n.{key} {op} ${param_name}")
             params[param_name] = value
 
     where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
@@ -454,7 +464,7 @@ async def traverse_graph(
 
     Args:
         session: Neo4j session
-        start_node_id: Starting node element ID
+        start_node_id: Starting node's node_id property
         relationship_types: Optional filter for relationship types (validated)
         direction: OUTGOING, INCOMING, or BOTH
         max_depth: Maximum traversal depth
@@ -487,8 +497,7 @@ async def traverse_graph(
         pattern = f"-{rel_pattern}-"
 
     query = f"""
-    MATCH (start){pattern}(end)
-    WHERE elementId(start) = $start_id
+    MATCH (start:{_NODE_LABEL_EXPR} {{node_id: $start_id}}){pattern}(end)
     RETURN DISTINCT end, labels(end) as labels, elementId(end) as id
     LIMIT $limit
     """
@@ -513,7 +522,7 @@ async def delete_node(
 
     Args:
         session: Neo4j session
-        node_id: Node element ID
+        node_id: Node's node_id property
         detach: If True, also delete relationships
 
     Returns:
@@ -524,8 +533,7 @@ async def delete_node(
 
     detach_clause = "DETACH " if detach else ""
     query = f"""
-    MATCH (n)
-    WHERE elementId(n) = $node_id
+    MATCH (n:{_NODE_LABEL_EXPR} {{node_id: $node_id}})
     {detach_clause}DELETE n
     RETURN count(n) as deleted
     """
@@ -549,12 +557,18 @@ async def create_indexes() -> None:
         # Create indexes for common node types
         indexes = [
             "CREATE INDEX concept_label IF NOT EXISTS FOR (n:Concept) ON (n.label)",
-            "CREATE INDEX concept_node_id IF NOT EXISTS FOR (n:Concept) ON (n.node_id)",
             "CREATE INDEX author_name IF NOT EXISTS FOR (n:Author) ON (n.name)",
             "CREATE INDEX paper_doi IF NOT EXISTS FOR (n:Paper) ON (n.doi)",
             "CREATE INDEX paper_title IF NOT EXISTS FOR (n:Paper) ON (n.title)",
             "CREATE INDEX method_label IF NOT EXISTS FOR (n:Method) ON (n.label)",
             "CREATE INDEX dataset_label IF NOT EXISTS FOR (n:Dataset) ON (n.label)",
+        ]
+        # node_id is the public node identifier; every node_id lookup matches
+        # on NODE_LABELS, so index it on each of them.
+        indexes += [
+            f"CREATE INDEX {label.lower()}_node_id IF NOT EXISTS "
+            f"FOR (n:{label}) ON (n.node_id)"
+            for label in NODE_LABELS
         ]
 
         for index_query in indexes:
