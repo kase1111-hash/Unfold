@@ -72,6 +72,17 @@ jobs:
       - name: Download spaCy model
         run: python -m spacy download en_core_web_sm
 
+      - name: Check migrations match the models
+        working-directory: ./backend
+        env:
+          PGPASSWORD: test
+          DATABASE_URL: postgresql://test:test@localhost:5432/unfold_migrations
+          JWT_SECRET: test-secret-key
+        run: |
+          psql -h localhost -U test -d unfold_test -c "CREATE DATABASE unfold_migrations"
+          alembic upgrade head
+          alembic check
+
       - name: Run tests
         working-directory: ./backend
         env:

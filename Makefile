@@ -50,21 +50,21 @@ dev-frontend:
 # ===================
 
 prod:
-	docker-compose -f docker-compose.prod.yml up -d
+	docker-compose --env-file .env.production -f docker-compose.prod.yml up -d
 	@echo "Production environment started!"
 
 prod-build:
-	docker-compose -f docker-compose.prod.yml build --no-cache
+	docker-compose --env-file .env.production -f docker-compose.prod.yml build --no-cache
 
 prod-down:
-	docker-compose -f docker-compose.prod.yml down
+	docker-compose --env-file .env.production -f docker-compose.prod.yml down
 
 prod-pull:
-	docker-compose -f docker-compose.prod.yml pull
+	docker-compose --env-file .env.production -f docker-compose.prod.yml pull
 
 prod-restart:
-	docker-compose -f docker-compose.prod.yml down
-	docker-compose -f docker-compose.prod.yml up -d
+	docker-compose --env-file .env.production -f docker-compose.prod.yml down
+	docker-compose --env-file .env.production -f docker-compose.prod.yml up -d
 
 # ===================
 # Testing
@@ -109,7 +109,7 @@ logs-neo4j:
 
 clean:
 	docker-compose down -v --remove-orphans
-	docker-compose -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
+	docker-compose --env-file .env.production -f docker-compose.prod.yml down -v --remove-orphans 2>/dev/null || true
 	docker system prune -f
 
 shell-backend:
@@ -119,7 +119,7 @@ db-shell:
 	docker-compose exec postgres psql -U postgres -d unfold
 
 neo4j-shell:
-	docker-compose exec neo4j cypher-shell -u neo4j -p password
+	docker-compose exec neo4j cypher-shell -u neo4j -p $${NEO4J_PASSWORD:-changeme}
 
 # ===================
 # Database
