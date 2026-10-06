@@ -1,21 +1,78 @@
 """Document management endpoints."""
 
 import logging
-from typing import Annotated
+from collections.abc import Callable, Coroutine
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from pydantic import BaseModel, Field
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.routing import APIRoute
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import CurrentUser, get_db
 from app.models.document import Document, DocumentStatus
+from app.services.graph.document_graph import (
+    build_document_graph_task,
+    delete_document_graph,
+)
 from app.services.ingestion.document_service import (
     DocumentProcessingError,
     DocumentService,
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter()
+
+# Maximum upload size (50MB)
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# Allowance for the multipart framing around the file in Content-Length
+MULTIPART_OVERHEAD_BYTES = 64 * 1024
+
+
+def _file_too_large() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        detail={
+            "code": "FILE_TOO_LARGE",
+            "message": f"File too large. Maximum size: {MAX_UPLOAD_BYTES // (1024*1024)}MB",
+        },
+    )
+
+
+class SizeLimitedRoute(APIRoute):
+    """Route that rejects an oversized body from its Content-Length header.
+
+    FastAPI reads and parses a multipart body before any dependency or
+    endpoint code runs, so the check wraps the route handler itself in
+    order to answer 413 without first receiving the whole upload.
+    """
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        handler = super().get_route_handler()
+
+        async def size_limited_handler(request: Request) -> Response:
+            content_length = request.headers.get("content-length", "")
+            if (
+                content_length.isdigit()
+                and int(content_length) > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
+            ):
+                raise _file_too_large()
+            return await handler(request)
+
+        return size_limited_handler
+
+
+router = APIRouter(route_class=SizeLimitedRoute)
 
 
 class DocumentUploadResponse(BaseModel):
@@ -58,40 +115,48 @@ async def get_document_service(
     status_code=status.HTTP_201_CREATED,
 )
 async def upload_document(
-    file: Annotated[UploadFile, File(description="PDF or EPUB document to upload")],
+    file: Annotated[UploadFile, File(description="PDF document to upload")],
     service: Annotated[DocumentService, Depends(get_document_service)],
     current_user: CurrentUser,
+    background_tasks: BackgroundTasks,
 ) -> DocumentUploadResponse:
     """Upload a document for processing.
 
-    Accepts PDF and EPUB files. The document will be:
-    1. Validated for format and license compliance
+    Accepts PDF files. The document will be:
+    1. Validated for format
     2. Parsed for metadata extraction
     3. Text content extracted
     4. Stored in the database
+    5. Built into the knowledge graph in the background (status becomes
+       "indexed" when that succeeds)
+
+    A file that can't be processed is rejected with 400 and its error code
+    (EMPTY_FILE, CORRUPT_PDF, ENCRYPTED_PDF, NO_TEXT_EXTRACTED); nothing is
+    stored for it.
 
     Args:
-        file: The document file to upload (PDF or EPUB)
+        file: The PDF file to upload
         service: Document service
         current_user: Authenticated user
+        background_tasks: Runs the knowledge-graph build after the response
 
     Returns:
-        Upload confirmation with document metadata
+        Upload confirmation with the processed document
     """
     # Validate file type
-    allowed_types = ["application/pdf", "application/epub+zip"]
+    allowed_types = ["application/pdf"]
     if file.content_type not in allowed_types:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail={
                 "code": "UNSUPPORTED_TYPE",
-                "message": f"Unsupported file type: {file.content_type}. Allowed: PDF, EPUB",
+                "message": f"Unsupported file type: {file.content_type}. Allowed: PDF",
             },
         )
 
-    # Read file content
+    # Read file content, at most one byte past the size limit
     try:
-        file_content = await file.read()
+        file_content = await file.read(MAX_UPLOAD_BYTES + 1)
     except Exception as e:
         logger.error(f"Failed to read uploaded file: {e}")
         raise HTTPException(
@@ -102,14 +167,16 @@ async def upload_document(
             },
         )
 
-    # Validate file size (max 50MB)
-    max_size = 50 * 1024 * 1024
-    if len(file_content) > max_size:
+    # Validate file size (also covers bodies sent without Content-Length)
+    if len(file_content) > MAX_UPLOAD_BYTES:
+        raise _file_too_large()
+
+    if not file_content:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail={
-                "code": "FILE_TOO_LARGE",
-                "message": f"File too large. Maximum size: {max_size // (1024*1024)}MB",
+                "code": "EMPTY_FILE",
+                "message": "The uploaded file is empty",
             },
         )
 
@@ -126,6 +193,11 @@ async def upload_document(
             detail={"code": e.code, "message": e.message},
         )
 
+    # Build the knowledge graph after the response is sent. The task never
+    # raises; it marks the document INDEXED when nodes were created.
+    if document.status == DocumentStatus.VALIDATED:
+        background_tasks.add_task(build_document_graph_task, document.doc_id)
+
     return DocumentUploadResponse(
         status="success",
         message="Document uploaded successfully",
@@ -133,12 +205,14 @@ async def upload_document(
     )
 
 
-@router.get("/", response_model=DocumentListResponse)
+# Served with and without the trailing slash, so neither form gets a 307
+@router.get("", response_model=DocumentListResponse)
+@router.get("/", response_model=DocumentListResponse, include_in_schema=False)
 async def list_documents(
     service: Annotated[DocumentService, Depends(get_document_service)],
     current_user: CurrentUser,
-    page: int = 1,
-    page_size: int = 20,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1),
     status_filter: DocumentStatus | None = None,
 ) -> DocumentListResponse:
     """List all documents for the current user.
@@ -183,9 +257,9 @@ async def get_document(
         current_user: Authenticated user
 
     Returns:
-        Document metadata
+        Document metadata (404 unless the current user owns it)
     """
-    document = await service.get_document(doc_id)
+    document = await service.get_document(doc_id, owner_id=current_user.user_id)
 
     if document is None:
         raise HTTPException(
@@ -211,13 +285,14 @@ async def delete_document(
     - Document record from database
     - Uploaded file from storage
     - Associated validation records
+    - Its knowledge-graph nodes (best effort)
 
     Args:
         doc_id: Document identifier (SHA-256 hash)
         service: Document service
         current_user: Authenticated user
     """
-    deleted = await service.delete_document(doc_id)
+    deleted = await service.delete_document(doc_id, owner_id=current_user.user_id)
 
     if not deleted:
         raise HTTPException(
@@ -227,6 +302,12 @@ async def delete_document(
                 "message": f"Document not found: {doc_id}",
             },
         )
+
+    # A graph-database problem must never fail the delete
+    try:
+        await delete_document_graph(doc_id)
+    except Exception:
+        logger.exception(f"Failed to delete graph nodes for {doc_id}")
 
 
 @router.get("/{doc_id}/content")
@@ -245,7 +326,7 @@ async def get_document_content(
     Returns:
         Document text content
     """
-    content = await service.get_document_content(doc_id)
+    content = await service.get_document_content(doc_id, owner_id=current_user.user_id)
 
     if content is None:
         raise HTTPException(
@@ -293,7 +374,9 @@ async def get_document_paraphrase(
             },
         )
 
-    content = await service.paraphrase_content(doc_id, complexity)
+    content = await service.paraphrase_content(
+        doc_id, complexity, owner_id=current_user.user_id
+    )
 
     if content is None:
         raise HTTPException(

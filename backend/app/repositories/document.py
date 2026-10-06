@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.document import DocumentORM, DocumentValidationORM
 from app.models.document import (
     Document,
-    DocumentCreate,
     DocumentLicense,
     DocumentSource,
     DocumentStatus,
@@ -33,17 +32,24 @@ class DocumentRepository:
         self.session = session
 
     @staticmethod
-    def generate_doc_id(content: bytes) -> str:
-        """Generate document ID from content hash.
+    def generate_doc_id(content: bytes, owner_id: str | None = None) -> str:
+        """Generate document ID from the owner and the content hash.
+
+        The owner is part of the hash so document IDs are per user: two
+        users uploading the same file each get their own document.
 
         Args:
             content: Document file content
+            owner_id: Owner user ID
 
         Returns:
-            SHA-256 hash prefixed with 'sha256:'
+            SHA-256 hash of owner_id + NUL + content, prefixed with 'sha256:'
         """
-        hash_value = hashlib.sha256(content).hexdigest()
-        return f"sha256:{hash_value}"
+        digest = hashlib.sha256()
+        if owner_id is not None:
+            digest.update(owner_id.encode() + b"\0")
+        digest.update(content)
+        return f"sha256:{digest.hexdigest()}"
 
     async def create(
         self,
