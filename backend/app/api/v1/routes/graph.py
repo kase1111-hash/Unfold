@@ -218,8 +218,9 @@ async def build_graph_for_document(
 
     result = await build_document_graph(doc_id, content)
 
+    # The rebuild replaced every node, so replace the stored IDs too.
+    await repo.set_graph_nodes(doc_id, result.node_ids)
     if result.nodes_created:
-        await repo.add_graph_nodes(doc_id, result.node_ids)
         await repo.update_status(doc_id, DocumentStatus.INDEXED)
 
     return DocumentGraphBuildResponse(

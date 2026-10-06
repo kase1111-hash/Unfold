@@ -92,8 +92,8 @@ async def build_document_graph_task(doc_id: str) -> None:
                     f"Graph build for {doc_id} had {len(result.errors)} errors; "
                     f"first: {result.errors[0]}"
                 )
+            await repo.set_graph_nodes(doc_id, result.node_ids)
             if result.nodes_created:
-                await repo.add_graph_nodes(doc_id, result.node_ids)
                 await repo.update_status(doc_id, DocumentStatus.INDEXED)
             logger.info(
                 f"Graph built for {doc_id}: {result.nodes_created} nodes, "

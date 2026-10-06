@@ -294,6 +294,23 @@ class DocumentRepository:
         )
         return True
 
+    async def set_graph_nodes(self, doc_id: str, node_ids: list[str]) -> bool:
+        """Replace the document's graph node IDs (after a full rebuild).
+
+        Args:
+            doc_id: Document identifier
+            node_ids: The complete list of the document's graph node IDs
+
+        Returns:
+            True if updated, False if document not found
+        """
+        result = await self.session.execute(
+            update(DocumentORM)
+            .where(DocumentORM.doc_id == doc_id)
+            .values(graph_nodes=list(node_ids), updated_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount > 0
+
     async def delete(self, doc_id: str) -> bool:
         """Delete a document.
 
