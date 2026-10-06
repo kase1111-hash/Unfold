@@ -100,18 +100,23 @@ class DocumentRepository:
         logger.info(f"Created document: {doc_id}")
         return self._to_model(doc_orm)
 
-    async def get_by_id(self, doc_id: str) -> Document | None:
+    async def get_by_id(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> Document | None:
         """Get document by ID.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return the document when it belongs
+                to this user
 
         Returns:
             Document if found, None otherwise
         """
-        result = await self.session.execute(
-            select(DocumentORM).where(DocumentORM.doc_id == doc_id)
-        )
+        query = select(DocumentORM).where(DocumentORM.doc_id == doc_id)
+        if owner_id is not None:
+            query = query.where(DocumentORM.owner_id == owner_id)
+        result = await self.session.execute(query)
         doc_orm = result.scalar_one_or_none()
 
         if doc_orm is None:
@@ -314,18 +319,23 @@ class DocumentRepository:
         )
         return result.scalar_one_or_none() is not None
 
-    async def get_content(self, doc_id: str) -> str | None:
+    async def get_content(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> str | None:
         """Get document text content.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return content when the document
+                belongs to this user
 
         Returns:
             Text content if found, None otherwise
         """
-        result = await self.session.execute(
-            select(DocumentORM.content).where(DocumentORM.doc_id == doc_id)
-        )
+        query = select(DocumentORM.content).where(DocumentORM.doc_id == doc_id)
+        if owner_id is not None:
+            query = query.where(DocumentORM.owner_id == owner_id)
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     # Validation methods
