@@ -36,10 +36,15 @@ class FlashcardORM(Base):
         nullable=False,
         index=True,
     )
-    source_node_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Generated cards are not tied to a graph node
+    source_node_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
+    hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    card_type: Mapped[str] = mapped_column(
+        String(32), default="recall", nullable=False
+    )
     difficulty: Mapped[FlashcardDifficulty] = mapped_column(
         Enum(FlashcardDifficulty, name="flashcard_difficulty"),
         default=FlashcardDifficulty.MEDIUM,
@@ -48,8 +53,11 @@ class FlashcardORM(Base):
 
     # SM2 algorithm fields
     easiness: Mapped[float] = mapped_column(Float, default=2.5, nullable=False)
-    interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    interval: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     repetitions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Review counts, for retention stats
+    total_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    correct_reviews: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     next_review: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

@@ -6,20 +6,29 @@ Includes flashcards, spaced repetition, engagement tracking, and exports.
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from pydantic import BaseModel, Field, ValidationError
 
-from app.api.v1.dependencies import CurrentUser
+from app.api.v1.dependencies import CurrentUser, DBSession, get_owned_document
+from app.models.learning import Flashcard, FlashcardBase, FlashcardCreate
+from app.models.user import User
+from app.repositories.document import DocumentRepository
+from app.repositories.flashcard import FlashcardRepository
 from app.services.learning import (
     get_relevance_scorer,
     get_flashcard_generator,
-    get_sm2_scheduler,
     get_export_service,
     get_engagement_tracker,
+    apply_review,
+    compute_study_stats,
+    CardReviewState,
     ResponseQuality,
     InteractionType,
     FlashcardData,
+    ReadingSession,
+    UserEngagementProfile,
 )
+from app.services.learning.flashcards import to_card_difficulty
 
 router = APIRouter(prefix="/learning", tags=["learning"])
 
@@ -52,10 +61,10 @@ class FocusOrderRequest(BaseModel):
 
 
 class GenerateFlashcardsRequest(BaseModel):
-    """Request to generate flashcards."""
+    """Request to generate flashcards from one of the caller's documents."""
 
-    text: str = Field(..., min_length=50)
-    num_cards: int = Field(default=5, ge=1, le=20)
+    document_id: str = Field(..., min_length=1)
+    num_cards: int = Field(default=10, ge=1, le=50)
     difficulty: str = Field(default="intermediate")
     context: Optional[str] = None
 
@@ -97,10 +106,21 @@ class RecordInteractionRequest(BaseModel):
     metadata: Optional[dict] = None
 
 
+class ExportFlashcardItem(BaseModel):
+    """One flashcard to export."""
+
+    card_id: Optional[str] = None
+    question: str = Field(..., min_length=1)
+    answer: str = Field(..., min_length=1)
+    tags: list[str] = Field(default_factory=list)
+    hint: Optional[str] = None
+    source: Optional[str] = None
+
+
 class ExportFlashcardsRequest(BaseModel):
     """Request to export flashcards."""
 
-    flashcards: list[dict]
+    flashcards: list[ExportFlashcardItem]
     format: str = Field(default="json")
     title: str = Field(default="Unfold Flashcards")
 
@@ -159,6 +179,71 @@ async def compute_focus_order(
     return {"sections": ordered_sections}
 
 
+# ============== Flashcard Helpers ==============
+
+
+def _card_not_found(card_id: str) -> HTTPException:
+    """404 for a card that is missing or belongs to another user."""
+    return HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={"code": "NOT_FOUND", "message": f"Flashcard {card_id} not found"},
+    )
+
+
+def _review_state(card: Flashcard) -> CardReviewState:
+    """SM2 state of a stored card."""
+    return CardReviewState(
+        card_id=card.card_id,
+        easiness_factor=card.easiness,
+        interval=card.interval,
+        repetitions=card.repetitions,
+        next_review=card.next_review,
+        last_review=card.last_reviewed,
+        total_reviews=card.total_reviews,
+        correct_reviews=card.correct_reviews,
+    )
+
+
+def _card_response(card: Flashcard) -> dict:
+    """API representation of a stored card."""
+    return {
+        "card_id": card.card_id,
+        "document_id": card.document_id,
+        "question": card.question,
+        "answer": card.answer,
+        "hint": card.hint,
+        "card_type": card.card_type,
+        "difficulty": card.difficulty.value,
+        "interval_days": card.interval,
+        "repetitions": card.repetitions,
+        "easiness_factor": round(card.easiness, 2),
+        "next_review": card.next_review.isoformat(),
+    }
+
+
+def _generated_card_fields(card: dict) -> Optional[dict]:
+    """Fields to store for a generated card, or None to skip it.
+
+    LLM output may lack keys or exceed the limits a hand-made card must
+    meet, so it goes through the same validation.
+    """
+    question, answer, hint = card.get("question"), card.get("answer"), card.get("hint")
+    if not isinstance(question, str) or not isinstance(answer, str):
+        return None
+    if not isinstance(hint, str) or not hint.strip():
+        hint = None
+    try:
+        fields = FlashcardBase(
+            question=question.strip(),
+            answer=answer.strip(),
+            hint=hint,
+            difficulty=to_card_difficulty(card.get("difficulty")),
+        )
+    except ValidationError:
+        return None
+    return {**fields.model_dump(), "card_type": str(card.get("type") or "recall")[:32]}
+
+
 # ============== Flashcard Generation ==============
 
 
@@ -166,18 +251,47 @@ async def compute_focus_order(
 async def generate_flashcards(
     request: GenerateFlashcardsRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ):
     """
-    Generate flashcards from text using LLM-based question synthesis.
+    Generate flashcards from one of the caller's documents and save them.
+
+    Uses LLM-based question synthesis when an API key is configured and
+    rule-based extraction otherwise. New cards are due for review at once.
     """
+    await get_owned_document(db, request.document_id, current_user)
+    content = await DocumentRepository(db).get_content(
+        request.document_id, owner_id=current_user.user_id
+    )
+    if not content or not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "NO_CONTENT",
+                "message": f"Document {request.document_id} has no text to generate flashcards from",
+            },
+        )
+
     generator = get_flashcard_generator()
-    flashcards = await generator.generate_flashcards(
-        text=request.text,
+    generated = await generator.generate_flashcards(
+        text=content,
         num_cards=request.num_cards,
         difficulty=request.difficulty,
         context=request.context,
     )
-    return {"flashcards": flashcards, "count": len(flashcards)}
+    new_cards = [
+        fields
+        for fields in map(_generated_card_fields, generated[: request.num_cards])
+        if fields is not None
+    ]
+    cards = await FlashcardRepository(db).create_many(
+        current_user.user_id, request.document_id, new_cards
+    )
+    return {
+        "document_id": request.document_id,
+        "flashcards": [_card_response(card) for card in cards],
+        "count": len(cards),
+    }
 
 
 @router.post("/flashcards/cloze")
@@ -197,30 +311,65 @@ async def generate_cloze_deletions(
     return {"cloze_cards": cards, "count": len(cards)}
 
 
-# ============== Spaced Repetition ==============
+# ============== Flashcard Management ==============
 
 
-@router.post("/flashcards/add")
-async def add_flashcard_to_scheduler(
-    card_id: str,
+@router.get("/flashcards")
+async def list_flashcards(
     current_user: CurrentUser,
+    db: DBSession,
+    document_id: Optional[str] = None,
 ):
     """
-    Add a flashcard to the spaced repetition scheduler.
+    List the caller's flashcards, optionally for one document.
     """
-    scheduler = get_sm2_scheduler()
-    state = scheduler.add_card(card_id)
-    return {
-        "card_id": state.card_id,
-        "next_review": state.next_review.isoformat(),
-        "interval_days": state.interval,
-    }
+    cards = await FlashcardRepository(db).list_cards(
+        current_user.user_id, document_id=document_id
+    )
+    return {"flashcards": [_card_response(card) for card in cards], "total": len(cards)}
+
+
+@router.post("/flashcards", status_code=status.HTTP_201_CREATED)
+async def create_flashcard(
+    request: FlashcardCreate,
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """
+    Create a flashcard by hand for one of the caller's documents.
+
+    The card is due for review at once.
+    """
+    await get_owned_document(db, request.document_id, current_user)
+    [card] = await FlashcardRepository(db).create_many(
+        current_user.user_id,
+        request.document_id,
+        [{**request.model_dump(exclude={"document_id"}), "card_type": "manual"}],
+    )
+    return _card_response(card)
+
+
+@router.delete("/flashcards/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_flashcard(
+    card_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> None:
+    """
+    Delete one of the caller's flashcards.
+    """
+    if not await FlashcardRepository(db).delete(card_id, current_user.user_id):
+        raise _card_not_found(card_id)
+
+
+# ============== Spaced Repetition ==============
 
 
 @router.post("/flashcards/review")
 async def review_flashcard(
     request: ReviewCardRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ):
     """
     Record a flashcard review and update its schedule.
@@ -233,17 +382,23 @@ async def review_flashcard(
     - 4: Correct with hesitation
     - 5: Perfect recall
     """
-    scheduler = get_sm2_scheduler()
-
     try:
         quality = ResponseQuality(request.quality)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid quality rating")
 
-    state = scheduler.review_card(request.card_id, quality)
+    repo = FlashcardRepository(db)
+    # Lock the row so two reviews of one card can't overwrite each other
+    card = await repo.get(request.card_id, current_user.user_id, for_update=True)
+    if card is None:
+        raise _card_not_found(request.card_id)
+
+    state = apply_review(_review_state(card), quality)
+    await repo.update_schedule(card.card_id, current_user.user_id, state)
 
     return {
-        "card_id": state.card_id,
+        "card_id": card.card_id,
+        "quality": int(quality),
         "next_review": state.next_review.isoformat(),
         "interval_days": state.interval,
         "easiness_factor": round(state.easiness_factor, 2),
@@ -254,73 +409,86 @@ async def review_flashcard(
 
 @router.get("/flashcards/due")
 async def get_due_flashcards(
+    current_user: CurrentUser,
+    db: DBSession,
     limit: int = Query(default=20, ge=1, le=100),
-    current_user: CurrentUser = None,
+    document_id: Optional[str] = None,
 ):
     """
-    Get flashcards that are due for review.
+    Get the caller's flashcards that are due for review, most overdue first.
     """
-    scheduler = get_sm2_scheduler()
-    due_cards = scheduler.get_due_cards(limit=limit)
-
+    cards, total = await FlashcardRepository(db).list_due(
+        current_user.user_id, limit, document_id=document_id
+    )
     return {
         "due_cards": [
             {
-                "card_id": card.card_id,
-                "days_overdue": -card.days_until_due,
-                "repetitions": card.repetitions,
-                "easiness_factor": round(card.easiness_factor, 2),
+                **_card_response(card),
+                "days_overdue": -_review_state(card).days_until_due,
             }
-            for card in due_cards
+            for card in cards
         ],
-        "total_due": len(due_cards),
+        "total_due": total,
     }
 
 
 @router.get("/flashcards/upcoming")
 async def get_upcoming_flashcards(
+    current_user: CurrentUser,
+    db: DBSession,
     days: int = Query(default=7, ge=1, le=30),
-    current_user: CurrentUser = None,
 ):
     """
-    Get flashcards scheduled for the next N days.
+    Get the caller's flashcards scheduled for the next N days.
     """
-    scheduler = get_sm2_scheduler()
-    upcoming = scheduler.get_upcoming_cards(days=days)
+    cards = await FlashcardRepository(db).list_upcoming(current_user.user_id, days)
 
     return {
         "upcoming_cards": [
             {
                 "card_id": card.card_id,
                 "scheduled_date": card.next_review.isoformat(),
-                "days_until_due": card.days_until_due,
+                "days_until_due": _review_state(card).days_until_due,
             }
-            for card in upcoming
+            for card in cards
         ],
-        "count": len(upcoming),
+        "count": len(cards),
     }
 
 
 @router.get("/flashcards/stats")
-async def get_study_stats(current_user: CurrentUser):
+async def get_study_stats(current_user: CurrentUser, db: DBSession):
     """
-    Get overall study statistics.
+    Get study statistics for the caller's flashcards.
     """
-    scheduler = get_sm2_scheduler()
-    return scheduler.get_study_stats()
+    cards = await FlashcardRepository(db).list_cards(current_user.user_id)
+    return compute_study_stats(_review_state(card) for card in cards)
 
 
 # ============== Engagement Tracking ==============
+
+
+def _get_owned_session(session_id: str, user: User) -> ReadingSession:
+    """Load one of the user's reading sessions, or raise 404.
+
+    Another user's session is reported exactly like a missing one.
+    """
+    session = get_engagement_tracker().get_session(session_id)
+    if session is None or session.user_id != user.user_id:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @router.post("/engagement/session/start")
 async def start_reading_session(
     request: StartSessionRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ):
     """
-    Start a new reading session.
+    Start a new reading session on one of the caller's documents.
     """
+    await get_owned_document(db, request.document_id, current_user)
     tracker = get_engagement_tracker()
     session_id = f"session_{uuid.uuid4().hex[:12]}"
 
@@ -344,11 +512,9 @@ async def end_reading_session(
     """
     End a reading session.
     """
+    _get_owned_session(session_id, current_user)
     tracker = get_engagement_tracker()
-    session = tracker.end_session(session_id)
-
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+    tracker.end_session(session_id)
 
     summary = tracker.get_session_summary(session_id)
     return summary
@@ -362,6 +528,7 @@ async def record_dwell_time(
     """
     Record dwell time for a section.
     """
+    _get_owned_session(request.session_id, current_user)
     tracker = get_engagement_tracker()
     tracker.record_dwell_time(
         session_id=request.session_id,
@@ -379,6 +546,7 @@ async def record_scroll(
     """
     Record scroll position.
     """
+    _get_owned_session(request.session_id, current_user)
     tracker = get_engagement_tracker()
     tracker.record_scroll(
         session_id=request.session_id,
@@ -396,6 +564,7 @@ async def record_interaction(
     """
     Record a user interaction.
     """
+    _get_owned_session(request.session_id, current_user)
     tracker = get_engagement_tracker()
 
     try:
@@ -419,35 +588,23 @@ async def get_session_summary(
     """
     Get summary of a reading session.
     """
+    _get_owned_session(session_id, current_user)
     tracker = get_engagement_tracker()
-    summary = tracker.get_session_summary(session_id)
-
-    if summary is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    return summary
+    return tracker.get_session_summary(session_id)
 
 
 @router.get("/engagement/profile")
 async def get_user_profile(current_user: CurrentUser):
     """
     Get the current user's engagement profile.
+
+    Percentages (avg_scroll_depth, comprehension_score) are on a 0-100 scale.
     """
     tracker = get_engagement_tracker()
-    profile = tracker.get_user_profile(current_user.user_id)
-
-    if profile is None:
-        return {
-            "user_id": current_user.user_id,
-            "total_reading_time_minutes": 0,
-            "documents_read": 0,
-            "avg_session_duration_minutes": 0,
-            "avg_scroll_depth": 0,
-            "preferred_complexity": 50,
-            "total_highlights": 0,
-            "total_flashcards": 0,
-            "comprehension_score": 0.5,
-        }
+    # A user with no finished sessions gets the defaults, in the same units
+    profile = tracker.get_user_profile(
+        current_user.user_id
+    ) or UserEngagementProfile(user_id=current_user.user_id)
 
     return {
         "user_id": profile.user_id,
@@ -466,10 +623,12 @@ async def get_user_profile(current_user: CurrentUser):
 async def get_reading_recommendations(
     document_id: str,
     current_user: CurrentUser,
+    db: DBSession,
 ):
     """
     Get personalized reading recommendations based on engagement.
     """
+    await get_owned_document(db, document_id, current_user)
     tracker = get_engagement_tracker()
     recommendations = tracker.get_reading_recommendations(
         user_id=current_user.user_id,
@@ -479,6 +638,21 @@ async def get_reading_recommendations(
 
 
 # ============== Export ==============
+
+
+def _to_export_data(items: list[ExportFlashcardItem]) -> list[FlashcardData]:
+    """Convert validated request items to FlashcardData objects."""
+    return [
+        FlashcardData(
+            card_id=item.card_id or f"fc_{i}",
+            question=item.question,
+            answer=item.answer,
+            tags=item.tags,
+            hint=item.hint,
+            source=item.source,
+        )
+        for i, item in enumerate(items)
+    ]
 
 
 @router.post("/export/flashcards")
@@ -495,17 +669,7 @@ async def export_flashcards(
     export_service = get_export_service()
 
     # Convert to FlashcardData objects
-    flashcards = [
-        FlashcardData(
-            card_id=fc.get("card_id", f"fc_{i}"),
-            question=fc["question"],
-            answer=fc["answer"],
-            tags=fc.get("tags", []),
-            hint=fc.get("hint"),
-            source=fc.get("source"),
-        )
-        for i, fc in enumerate(request.flashcards)
-    ]
+    flashcards = _to_export_data(request.flashcards)
 
     format_handlers = {
         "json": export_service.export_to_json,
@@ -548,19 +712,9 @@ async def export_flashcard_bundle(
     """
     export_service = get_export_service()
 
-    flashcards = [
-        FlashcardData(
-            card_id=fc.get("card_id", f"fc_{i}"),
-            question=fc["question"],
-            answer=fc["answer"],
-            tags=fc.get("tags", []),
-            hint=fc.get("hint"),
-            source=fc.get("source"),
-        )
-        for i, fc in enumerate(request.flashcards)
-    ]
+    flashcards = _to_export_data(request.flashcards)
 
-    bundle = export_service.create_export_bundle(flashcards, title=request.title)
+    bundle =export_service.create_export_bundle(flashcards, title=request.title)
 
     return Response(
         content=bundle,
