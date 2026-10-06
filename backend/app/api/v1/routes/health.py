@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -34,14 +34,22 @@ class DetailedHealthStatus(HealthStatus):
     services: dict[str, dict[str, str | int | bool]]
 
 
-@router.get("/health", response_model=HealthStatus)
-async def health_check() -> HealthStatus:
+@router.get(
+    "/health",
+    response_model=HealthStatus,
+    responses={503: {"model": HealthStatus, "description": "PostgreSQL unreachable"}},
+)
+async def health_check(response: Response) -> HealthStatus:
     """Basic health check endpoint.
 
-    Verifies PostgreSQL connectivity and returns overall status.
+    Verifies PostgreSQL connectivity and returns overall status. Answers 503
+    when PostgreSQL is unreachable, so container health checks (curl -f)
+    actually fail.
     """
     pg_status = await check_postgres_connection()
     pg_ok = pg_status.get("connected", False)
+    if not pg_ok:
+        response.status_code = 503
 
     return HealthStatus(
         status="healthy" if pg_ok else "degraded",
@@ -108,11 +116,16 @@ async def _check_vector_store() -> dict[str, str | bool]:
 
 
 @router.get("/health/ready")
-async def readiness_check() -> dict[str, str]:
+async def readiness_check(response: Response) -> dict[str, str]:
     """Kubernetes-style readiness probe.
 
-    Returns 200 if the application is ready to receive traffic.
+    Returns 200 if the application is ready to receive traffic, i.e. it can
+    reach PostgreSQL; 503 otherwise.
     """
+    pg_status = await check_postgres_connection()
+    if not pg_status.get("connected", False):
+        response.status_code = 503
+        return {"status": "not_ready"}
     return {"status": "ready"}
 
 

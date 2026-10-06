@@ -29,7 +29,7 @@ Before contributing, ensure you have:
 
 Unfold consists of two main components:
 
-1. **Backend** (`/backend`) - Python/FastAPI REST API with PostgreSQL, Neo4j, and vector stores
+1. **Backend** (`/backend`) - Python/FastAPI REST API with PostgreSQL, Neo4j, and a FAISS vector store
 2. **Frontend** (`/frontend`) - Next.js 14 React application with TypeScript
 
 We recommend reading the [README.md](README.md) and [AI-instructions.md](AI-instructions.md) to understand the architecture and implementation details.
@@ -67,8 +67,9 @@ python -m venv venv
 source venv/bin/activate  # Linux/macOS
 # or: venv\Scripts\activate  # Windows
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (requirements-dev.txt includes requirements.txt plus
+# the test and lint tools)
+pip install -r requirements-dev.txt
 
 # Copy environment variables
 cp .env.example .env
@@ -86,6 +87,8 @@ cd frontend
 npm install
 
 # Copy environment variables
+# NEXT_PUBLIC_API_URL is the API base including /api/v1,
+# e.g. http://localhost:8000/api/v1
 cp .env.example .env.local
 
 # Run development server
@@ -129,10 +132,9 @@ npm run dev
 
 #### Areas of Focus
 
-- **Document Processing** - Improving PDF/EPUB parsing
+- **Document Processing** - Improving PDF parsing
 - **Knowledge Graph** - Entity extraction and relation mapping
 - **Learning System** - Flashcard generation and spaced repetition
-- **Ethics & Privacy** - Bias detection and GDPR compliance
 - **UI/UX** - Accessibility and responsive design
 
 ## Pull Request Process
@@ -251,8 +253,24 @@ npm run type-check
 
 ### Backend Tests
 
+The suite needs PostgreSQL and drops/recreates the schema of the database it
+runs against, so it refuses to start unless the database name ends in `_test`.
+Neo4j is optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI`
+is unreachable (those marked `requires_no_neo4j` run only then). CI runs with
+both.
+
 ```bash
 cd backend
+pip install -r requirements-dev.txt
+
+# One-time: create a test database (any name ending in _test)
+createdb -h localhost -U postgres unfold_test
+
+# Optional: a Neo4j for the graph tests
+docker run -d -p 7687:7687 -e NEO4J_AUTH=neo4j/testpassword neo4j:5.17-community
+
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/unfold_test
+export NEO4J_URI=bolt://localhost:7687 NEO4J_PASSWORD=testpassword
 
 # Run all tests
 pytest

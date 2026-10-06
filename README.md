@@ -21,9 +21,9 @@ Unfold is a natural language processing platform that bridges the gap between de
 ## Features
 
 ### Document Management
-- **PDF/EPUB Ingestion** - Upload and process academic documents
+- **PDF Ingestion** - Upload academic PDFs; the knowledge graph is built automatically afterwards
 - **DOI Validation** - Verify document authenticity via CrossRef
-- **Provenance Tracking** - C2PA-compliant content fingerprinting
+- **Provenance Hash** - SHA-256 fingerprint of the extracted text, recorded at upload
 - **License Compliance** - Creative Commons validation
 
 ### Knowledge Graph
@@ -52,13 +52,6 @@ Cognitive version control for your learning journey - track what you've learned 
 - **Zotero Export** - RIS, BibTeX, and CSL-JSON formats
 - **Reflection Engine** - Track understanding evolution over time
 
-### Ethics & Privacy
-Digital sovereignty and data ownership are core principles - you control your learning data.
-- **Bias Auditing** - Sentiment analysis and inclusivity checks for human authorship verification
-- **GDPR Compliance** - Consent management and data portability for self-hosted AI privacy
-- **Differential Privacy** - Anonymized analytics with proof of human work preservation
-- **Transparency Dashboard** - AI operation tracking for process legibility and explainable AI
-
 ## Architecture
 
 ```
@@ -74,10 +67,9 @@ Backend (FastAPI + Python 3.11+)
 ├── Knowledge Graph Engine (Neo4j)
 ├── Learning Services (SM2, Flashcards)
 ├── Scholar Services (Citations, Credibility)
-├── Ethics Services (Provenance, Privacy)
 │
 Storage Layer
-├── PostgreSQL (user data, sessions)
+├── PostgreSQL (users, documents, flashcards)
 ├── Neo4j (semantic graph)
 └── FAISS (vector embeddings)
 ```
@@ -154,15 +146,19 @@ result = await builder.build_from_text(text, doc_id)
 - `backend/app/services/graph/llm_relations.py` - LLM providers
 - `backend/app/services/graph/spacy_loader.py` - Cached spaCy loader
 
-C. Reading Interface (Frontend)
+## Quick Start
 
 ```bash
 # Clone the repository
 git clone https://github.com/your-org/unfold.git
 cd unfold
 
-# Start with Docker Compose
-docker-compose up -d
+# Start the backend, PostgreSQL, Neo4j and Redis with Docker Compose
+cp .env.example .env
+docker compose up -d
+
+# Start the frontend (not part of the dev compose file)
+cd frontend && cp .env.example .env.local && npm install && npm run dev
 
 # Access the application
 # Frontend: http://localhost:3000
@@ -225,40 +221,41 @@ npm run dev
 
 **Backend (.env)**
 
+See `backend/.env.example` for the full list.
+
 ```bash
-# Application
-APP_NAME=Unfold
-APP_VERSION=1.0.0
+# Application: development | test | staging | production
 ENVIRONMENT=development
 
-# Database
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_DB=unfold
-POSTGRES_USER=unfold
-POSTGRES_PASSWORD=your-secure-password
+# Database (required in production/staging)
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/unfold
 
-# Neo4j (optional)
+# Neo4j (optional; graph routes return 503 GRAPH_UNAVAILABLE without it)
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=your-neo4j-password
+NEO4J_PASSWORD=changeme
 
-# Security
+# Security (production/staging: 32+ characters, no placeholder values)
 JWT_SECRET=your-jwt-secret-key
 JWT_ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+JWT_EXPIRATION_MINUTES=30
 
 # AI Services (optional)
 OPENAI_API_KEY=your-openai-key
 
-# CORS
-CORS_ORIGINS=["http://localhost:3000"]
+# CORS (comma-separated)
+CORS_ORIGINS=http://localhost:3000
 ```
+
+In production and staging the backend refuses to start with a missing or
+short `JWT_SECRET`, a missing or empty `NEO4J_PASSWORD`, or placeholder values
+(anything containing "change", such as `changeme`).
 
 **Frontend (.env.local)**
 
 ```bash
-NEXT_PUBLIC_API_URL=http://localhost:8000
+# API base URL including the /api/v1 prefix (inlined at build time)
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ```
 
 ## API Documentation
@@ -290,7 +287,7 @@ Content-Type: application/json
 }
 ```
 
-Response:
+Response (the refresh token is set as an httpOnly cookie):
 ```json
 {
   "user": {
@@ -298,11 +295,9 @@ Response:
     "email": "user@example.com",
     "username": "johndoe"
   },
-  "tokens": {
-    "access_token": "eyJ...",
-    "refresh_token": "eyJ...",
-    "token_type": "bearer"
-  }
+  "access_token": "eyJ...",
+  "token_type": "bearer",
+  "expires_in": 1800
 }
 ```
 
@@ -314,12 +309,19 @@ POST /api/v1/documents/upload
 Authorization: Bearer <token>
 Content-Type: multipart/form-data
 
-file: <PDF or EPUB file>
+file: <PDF file>
 ```
+
+Returns 201 with the processed document (status `validated`). The knowledge
+graph is then built in the background and the status becomes `indexed`.
+Errors: 400 with `detail.code` `EMPTY_FILE`, `CORRUPT_PDF`, `ENCRYPTED_PDF` or
+`NO_TEXT_EXTRACTED`; 413 `FILE_TOO_LARGE`; 415 `UNSUPPORTED_TYPE`.
+
+Documents are private to their owner: other users get 404.
 
 #### List Documents
 ```http
-GET /api/v1/documents/?page=1&page_size=20
+GET /api/v1/documents?page=1&page_size=20
 Authorization: Bearer <token>
 ```
 
@@ -331,23 +333,28 @@ Authorization: Bearer <token>
 
 ### Knowledge Graph
 
-#### Build Graph from Text
-```http
-POST /api/v1/graph/build
-Authorization: Bearer <token>
-Content-Type: application/json
+All graph routes require a bearer token and only expose graphs of the
+caller's documents. When Neo4j is unreachable they return 503 with
+`detail.code` `GRAPH_UNAVAILABLE`.
 
-{
-  "text": "Your document text here...",
-  "source_doc_id": "doc-123",
-  "extract_relations": true,
-  "generate_embeddings": true
-}
+#### Rebuild a Document's Graph
+```http
+POST /api/v1/graph/documents/{doc_id}/build
+Authorization: Bearer <token>
+```
+
+Rebuilds the graph from the stored document text (idempotent). Response:
+`{doc_id, nodes_created, relations_created, errors}`.
+
+#### Get a Document's Relations
+```http
+GET /api/v1/graph/documents/{doc_id}/relations
+Authorization: Bearer <token>
 ```
 
 #### Search Nodes
 ```http
-GET /api/v1/graph/nodes?query=quantum&node_type=Concept&limit=50
+GET /api/v1/graph/nodes?source_doc_id={doc_id}&query=quantum&node_type=Concept&limit=50
 Authorization: Bearer <token>
 ```
 
@@ -360,14 +367,18 @@ Authorization: Bearer <token>
 #### Link to Wikipedia
 ```http
 GET /api/v1/graph/link/wikipedia/{entity}
+Authorization: Bearer <token>
 ```
 
 #### Search Academic Papers
 ```http
 GET /api/v1/graph/link/papers?query=machine+learning&limit=10
+Authorization: Bearer <token>
 ```
 
 ### Learning System
+
+Flashcards are stored per user in PostgreSQL and scheduled with SM2.
 
 #### Generate Flashcards
 ```http
@@ -376,11 +387,15 @@ Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "text": "Your study material here...",
-  "num_cards": 5,
-  "difficulty": "intermediate"
+  "document_id": "<doc_id>",
+  "num_cards": 10
 }
 ```
+
+Reads the text of one of your documents server-side; the new cards are due
+immediately. `GET /api/v1/learning/flashcards?document_id=` lists your cards,
+`POST /api/v1/learning/flashcards` adds one manually and
+`DELETE /api/v1/learning/flashcards/{card_id}` removes one.
 
 #### Review Flashcard (SM2)
 ```http
@@ -460,7 +475,6 @@ Coreference Resolution	Rule-based + LLM hybrid	Pronoun and reference linking
 Summarization/Paraphrasing	GPT-4o-mini / Mistral 8x7B	Multi-level simplification
 Question Generation	T5 / FLAN-UL2	SRS integration
 Image Captioning	BLIP-2 / Pix2Struct	Diagram understanding
-Bias Audit	RoBERTa Sentiment / Perspective API	Language inclusivity checks
 
 **Local/Offline LLM Options:**
 - Ollama (recommended): Easy setup, runs llama3.2, mistral, qwen2.5 locally
@@ -471,7 +485,6 @@ Function	API
 Document Validation	CrossRef, Unpaywall, CORE
 Metadata & Author ID	ORCID, ROR
 Citation Management	Zotero
-Provenance	C2PA
 Knowledge Links	Wikipedia, arXiv, Semantic Scholar
 LMS Integration	LTI 1.3 (Canvas, Moodle)
 Analytics	Mixpanel / PostHog
@@ -480,20 +493,16 @@ Storage	AWS S3 / GCS / IPFS (optional decentralized mode)
 
 All data encrypted (AES-256 at rest, TLS 1.3 in transit)
 
-Differential privacy for analytics
-
-Strict user consent for data collection
-
 OpenAI usage governed under academic license agreements
 
 🧰 8. Development Environment
 Stack	Tool
-Backend	Python 3.11+, FastAPI, LangChain/LangGraph
+Backend	Python 3.11+, FastAPI, spaCy
 Frontend	Next.js (React 18+), Tailwind, D3.js
-Database	PostgreSQL + Neo4j (or Weaviate)
-Embeddings	Pinecone or FAISS
+Database	PostgreSQL + Neo4j
+Embeddings	FAISS
 Auth	OAuth2 + JWT (optional ORCID login)
-Testing	PyTest + Cypress
+Testing	PyTest + Playwright
 DevOps	Docker Compose + GitHub Actions CI/CD
 🚀 9. Roadmap Summary
 Milestone	Deliverables
@@ -502,7 +511,7 @@ v0.2	Semantic graph + embeddings
 v0.3	Reading interface MVP
 v0.4	Adaptive focus mode
 v0.5	Scholar Mode + reflection engine
-v1.0	Ethics + provenance + public beta
+v1.0	Public beta (ethics suite deferred to the backlog, see REFOCUS_PLAN.md)
 🧩 10. Licensing & Open Science
 
 License: AGPL v3 (to ensure community benefit)
@@ -513,59 +522,15 @@ Opt-in Transparency Portal:
 
 Model prompts
 
-Bias metrics
-
 Audit logs
 
 Citation sources
 
-1. System Overview
-Strengths: The five-layer modular design promotes separation of concerns, making it easier to iterate on individual components (e.g., swapping out the knowledge graph backend without disrupting the frontend). This aligns with microservices principles and facilitates contributions from open-source communities under AGPL v3.
-Challenges: Inter-layer communication could introduce latency if not optimized—e.g., real-time updates from the adaptive learning layer to the frontend.
-Suggestions:
-
-Add a sixth "Orchestration Layer" using tools like Apache Airflow or LangGraph extensions for workflow automation, ensuring smooth data flow across layers.
-Define clear APIs between layers (e.g., gRPC for low-latency backend comms) to enable plugin-based extensions, like third-party LLM integrations.
-
-2. System Architecture
-Strengths: The stack choice (Next.js/FastAPI/LangGraph/Neo4j) is solid—performant, scalable, and community-supported. Incorporating vector stores like Weaviate (with its hybrid search) over pure Neo4j could enhance semantic queries. C2PA for provenance is a smart nod to emerging content authenticity standards.
-Challenges: Multi-database management (PostgreSQL + Neo4j/Weaviate + Pinecone) risks data silos; ensure eventual consistency via event-driven patterns (e.g., Kafka).
-Suggestions:
-
-For storage, consider a unified vector-graph hybrid like Weaviate or Milvus to consolidate embeddings and relations, reducing query hops.
-Add a caching layer (Redis) for frequent accesses, like paraphrase generations, to cut LLM API costs.
-Visualize the architecture with a diagram in docs—use Mermaid.js for embeddable flowcharts.
-
-3. Functional Modules
-A. Document Ingestion & Validation
-Strengths: Comprehensive validation pipeline builds trust; ORCID/ROR integration ensures author credibility in academic contexts.
-Challenges: API rate limits (e.g., CrossRef) could bottleneck bulk uploads; handle with async queues.
-Suggestions:
-
-Enhance OCR with multimodal models like Donut (for structured docs) to better handle tables/formulas in scanned PDFs.
-Add plagiarism checks via tools like Turnitin API or simple cosine similarity on embeddings.
-
-B. Semantic Parsing & Knowledge Graph
-Strengths: LangChain orchestration + spaCy/GPT-4o for extraction is efficient; multimodal support (CLIP/Pix2Struct) makes it versatile for STEM texts.
-Challenges: Graph schema might bloat with large docs; enforce node pruning based on relevance scores.
-Suggestions:
-
-Extend relations with temporal edges (e.g., EVOLVED_FROM for historical concepts) to support reflection timelines.
-For external linkers, integrate Hugging Face datasets API for open-source data augmentation.
-Prototype Tip: I could simulate a mini knowledge graph here using NetworkX (available in my environment) on a sample text excerpt. If you'd like, provide a short document snippet, and I'll code a basic extraction.
-
-C. Reading Interface (Frontend)
-Strengths: Dual-view with hybrid slider is intuitive; Zustand for state keeps it lightweight.
-Challenges: Real-time paraphrase generation could strain client-side resources; offload to backend via WebSockets.
-Suggestions:
-
-Integrate accessibility features like ARIA labels and voice-over support for conceptual views.
-Add collaborative editing (e.g., via ShareDB) for teacher-student annotations.
-
-D. Intelligent Focus Mode
-Strengths: BERT + graph traversal for prioritization is explainable; RLHF-lite feedback loop enables personalization.
-Challenges: Attention heatmaps via Captum require PyTorch integration, which might complicate the backend.
-Suggestions:
+#### Export to Zotero
+```http
+POST /api/v1/scholar/zotero/export
+Authorization: Bearer <token>
+Content-Type: application/json
 
 {
   "items": [
@@ -595,63 +560,14 @@ Content-Type: application/json
 }
 ```
 
-### Ethics & Privacy
-
-#### Create Provenance Credential
-```http
-POST /api/v1/ethics/provenance/create
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "document_id": "doc-123",
-  "content": "Document content..."
-}
-```
-
-#### Audit Document for Bias
-```http
-POST /api/v1/ethics/bias/audit
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "document_id": "doc-123",
-  "content": "Content to analyze..."
-}
-```
-
-#### Record Consent (GDPR)
-```http
-POST /api/v1/ethics/privacy/consent
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{
-  "consent_type": "analytics",
-  "granted": true
-}
-```
-
-Consent types: `essential`, `analytics`, `personalization`, `marketing`, `research`
-
-#### Export User Data
-```http
-GET /api/v1/ethics/privacy/export
-Authorization: Bearer <token>
-```
-
-#### Get Ethics Dashboard
-```http
-GET /api/v1/ethics/analytics/dashboard?period_days=30
-Authorization: Bearer <token>
-```
-
 ### Health Check
 
 ```http
 GET /api/v1/health
 ```
+
+Returns 503 when PostgreSQL is unreachable (`/health/ready` likewise);
+`/health/live` only reports that the process is up.
 
 ## Frontend Development
 
@@ -665,10 +581,11 @@ frontend/
 │   │   ├── ui/          # Shared UI components
 │   │   ├── graph/       # Knowledge graph components
 │   │   ├── learning/    # Flashcard/learning components
-│   │   └── ethics/      # Ethics dashboard components
-│   ├── hooks/           # Custom React hooks
-│   ├── lib/             # Utilities and helpers
-│   └── stores/          # Zustand state management
+│   │   └── reader/      # Reading interface components
+│   ├── services/        # API client
+│   ├── store/           # Zustand state management
+│   ├── types/           # TypeScript types
+│   └── utils/           # Utilities and helpers
 ├── e2e/                 # Playwright E2E tests
 └── public/              # Static assets
 ```
@@ -696,8 +613,20 @@ npm run test:e2e:report    # Show test report
 
 ### Backend Tests
 
+The suite needs PostgreSQL and drops/recreates the schema of the database it
+runs against, so `DATABASE_URL` must name a database ending in `_test`
+(default: `postgresql://test:test@localhost:5432/unfold_test`). Neo4j is
+optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI` is not
+reachable, and tests marked `requires_no_neo4j` (the 503 paths) run only then.
+CI runs with both services.
+
 ```bash
 cd backend
+pip install -r requirements-dev.txt   # runtime + test/lint tools
+
+createdb -h localhost -U postgres unfold_test
+export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/unfold_test
+# Optional: export NEO4J_URI=bolt://localhost:7687 NEO4J_PASSWORD=...
 
 # Run all tests
 pytest
@@ -738,13 +667,11 @@ npm run test:e2e:ui
 
 The test suite includes:
 
-**Backend Integration Tests:**
-- Document upload and processing flow
-- Knowledge graph operations
-- Flashcard generation and SM2 scheduling
-- Scholar mode citation trees
-- Ethics provenance and bias auditing
-- Privacy compliance (GDPR)
+**Backend Tests:**
+- Authentication, health checks, configuration and rate limiting
+- Document upload, error codes and per-user ownership
+- Knowledge graph building, queries and the Neo4j-down (503) path
+- Flashcard generation, persistence and SM2 scheduling
 
 **Frontend E2E Tests:**
 - Navigation and routing
@@ -758,49 +685,21 @@ The test suite includes:
 
 ### Docker Compose (Recommended)
 
-```yaml
-# docker-compose.yml
-version: '3.8'
+- **Development:** `docker compose up -d` starts the backend (port 8000),
+  PostgreSQL, Neo4j and Redis using `docker-compose.yml` and `.env`
+  (copy `.env.example`). Run the frontend with `npm run dev`.
+- **Production:** `docker-compose.prod.yml` adds nginx (TLS, `/api/` routed to
+  the backend) and the frontend, and runs `alembic upgrade head` before the API
+  starts. Secrets are required:
 
-services:
-  backend:
-    build: ./backend
-    ports:
-      - "8000:8000"
-    environment:
-      - POSTGRES_HOST=db
-      - NEO4J_URI=bolt://neo4j:7687
-    depends_on:
-      - db
-      - neo4j
-
-  frontend:
-    build: ./frontend
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
-
-  db:
-    image: postgres:14
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=unfold
-      - POSTGRES_USER=unfold
-      - POSTGRES_PASSWORD=changeme
-
-  neo4j:
-    image: neo4j:5
-    volumes:
-      - neo4j_data:/data
-    environment:
-      - NEO4J_AUTH=neo4j/changeme
-
-volumes:
-  postgres_data:
-  neo4j_data:
+```bash
+cp .env.production.example .env.production   # fill in the secrets
+make ssl-generate                            # or put real certificates in nginx/ssl/
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d
 ```
+
+The frontend is built with `NEXT_PUBLIC_API_URL=/api/v1` (same origin through
+nginx) unless you set another value.
 
 ### Production Considerations
 

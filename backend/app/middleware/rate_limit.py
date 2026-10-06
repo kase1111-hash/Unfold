@@ -123,19 +123,14 @@ def get_auth_limiter() -> RateLimiter:
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP from request, handling proxies."""
-    # Check X-Forwarded-For header (set by reverse proxies)
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # Take the first IP (original client)
-        return forwarded.split(",")[0].strip()
+    """Return the client IP used as the rate-limit key.
 
-    # Check X-Real-IP header (nginx)
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
-
-    # Fall back to direct client IP
+    X-Forwarded-For / X-Real-IP are deliberately NOT read here: any client
+    can send them, so trusting them lets an attacker pick a fresh bucket per
+    request and bypass the auth limits. Behind a reverse proxy, uvicorn's
+    proxy-headers support rewrites request.client from X-Forwarded-For, but
+    only for peers listed in FORWARDED_ALLOW_IPS (see docker-compose.prod.yml).
+    """
     if request.client:
         return request.client.host
 

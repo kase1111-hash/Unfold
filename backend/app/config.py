@@ -17,6 +17,15 @@ class ConfigurationError(Exception):
     pass
 
 
+def _is_placeholder(value: str) -> bool:
+    """True for template values such as 'changeme' or 'CHANGE_ME_...'.
+
+    The example env files ship values like these; they are publicly known,
+    so they must never be accepted as real secrets.
+    """
+    return "change" in value.lower()
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -123,6 +132,12 @@ class Settings(BaseSettings):
                 "JWT_SECRET must be at least 32 characters in production"
             )
 
+        if is_production and _is_placeholder(self.jwt_secret):
+            raise ConfigurationError(
+                "JWT_SECRET is still a placeholder value; generate a real secret "
+                "for production/staging"
+            )
+
         # Database URL validation
         if self.database_url is None:
             if is_production:
@@ -143,9 +158,14 @@ class Settings(BaseSettings):
             # Use development default
             self.neo4j_password = "changeme"
 
-        if is_production and self.neo4j_password in ("password", "changeme"):
+        if is_production and (
+            not self.neo4j_password
+            or self.neo4j_password == "password"
+            or _is_placeholder(self.neo4j_password)
+        ):
             raise ConfigurationError(
-                "NEO4J_PASSWORD must be changed from its default in production"
+                "NEO4J_PASSWORD must be changed from its default/placeholder "
+                "value in production"
             )
 
         return self

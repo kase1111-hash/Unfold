@@ -2,6 +2,11 @@
 
 This document provides step-by-step guidance for implementing the Unfold platform — an AI-assisted reading and comprehension system.
 
+> It is the original implementation blueprint. The current scope is the core
+> loop (PDF upload → knowledge graph → flashcards → spaced repetition); the
+> ethics suite, EPUB, Pinecone and Scholar Mode are deferred to the backlog.
+> See REFOCUS_PLAN.md and README.md for what is implemented today.
+
 ---
 
 ## Table of Contents
@@ -30,7 +35,7 @@ This document provides step-by-step guidance for implementing the Unfold platfor
 | Semantic Parsing & Knowledge Graph | Convert text into structured, queryable nodes |
 | Reading Interface | Interactive dual-view document explorer |
 | Adaptive Learning & Focus Engine | Personalized summarization and spaced-repetition |
-| Ethical & Academic Framework | Provenance, compliance, and bias audit systems |
+| Ethical & Academic Framework | Deferred to the backlog (see REFOCUS_PLAN.md, Phase 4) |
 
 ---
 
@@ -39,7 +44,7 @@ This document provides step-by-step guidance for implementing the Unfold platfor
 ### Backend
 - **Language:** Python 3.11+
 - **Framework:** FastAPI
-- **AI Orchestration:** LangChain / LangGraph
+- **NLP / LLMs:** spaCy plus Ollama, OpenAI or Anthropic (no orchestration framework)
 - **Authentication:** OAuth2 + JWT (optional ORCID login)
 
 ### Frontend
@@ -51,7 +56,7 @@ This document provides step-by-step guidance for implementing the Unfold platfor
 ### Databases
 - **User Data:** PostgreSQL
 - **Knowledge Graph:** Neo4j or Weaviate
-- **Vector Embeddings:** Pinecone or FAISS
+- **Vector Embeddings:** FAISS
 
 ### DevOps
 - **Containerization:** Docker Compose
@@ -98,24 +103,20 @@ unfold/
 │   │   │   └── __init__.py
 │   │   ├── services/
 │   │   │   ├── ingestion/       # Document ingestion service
-│   │   │   │   ├── parser.py    # PDF/EPUB parsing
+│   │   │   │   ├── parser.py    # PDF parsing
 │   │   │   │   ├── ocr.py       # OCR with Tesseract
 │   │   │   │   └── validator.py # DOI/metadata validation
 │   │   │   ├── graph/           # Knowledge graph service
 │   │   │   │   ├── extractor.py # Entity extraction
 │   │   │   │   ├── builder.py   # Graph construction
 │   │   │   │   └── linker.py    # External API linking
-│   │   │   ├── llm/             # LLM orchestration
-│   │   │   │   ├── chains.py    # LangChain chains
+│   │   │   ├── llm/             # LLM providers
 │   │   │   │   ├── paraphrase.py
 │   │   │   │   └── summarize.py
 │   │   │   ├── learning/        # Adaptive learning service
 │   │   │   │   ├── tracker.py   # Engagement tracking
 │   │   │   │   ├── flashcards.py
 │   │   │   │   └── scheduler.py # SM2 algorithm
-│   │   │   ├── ethics/          # Bias audit module
-│   │   │   │   ├── provenance.py
-│   │   │   │   └── audit.py
 │   │   │   └── external/        # External API integrations
 │   │   │       ├── crossref.py
 │   │   │       ├── orcid.py
@@ -129,9 +130,9 @@ unfold/
 │   │   ├── db/                  # Database connections
 │   │   │   ├── postgres.py
 │   │   │   ├── neo4j.py
-│   │   │   └── vector.py        # Pinecone/FAISS
+│   │   │   └── vector.py        # FAISS
 │   │   └── utils/
-│   │       ├── hashing.py       # SHA-256, C2PA
+│   │       ├── hashing.py       # SHA-256
 │   │       └── embeddings.py    # OpenAI embeddings
 │   ├── tests/
 │   │   ├── unit/
@@ -182,11 +183,7 @@ cp frontend/.env.example frontend/.env.local
 DATABASE_URL=postgresql://user:pass@localhost:5432/unfold
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-# Vector Store
-PINECONE_API_KEY=your-key
-PINECONE_ENVIRONMENT=your-env
+NEO4J_PASSWORD=changeme
 
 # AI Models
 OPENAI_API_KEY=your-key
@@ -242,14 +239,14 @@ Follow this sequence for a logical build progression:
 1. **Backend skeleton** - FastAPI setup with health endpoints
 2. **Database connections** - PostgreSQL and Neo4j clients
 3. **Authentication** - JWT-based auth system
-4. **Document ingestion** - PDF/EPUB parsing with Apache Tika
+4. **Document ingestion** - PDF parsing
 5. **Validation service** - DOI/CrossRef integration
 
 ### Phase 2: Knowledge Graph (v0.2)
 6. **Entity extraction** - spaCy + LLM extraction pipeline
 7. **Graph builder** - Neo4j node/relationship creation
 8. **Embedding service** - OpenAI text-embedding-3-large integration
-9. **Vector storage** - Pinecone/FAISS setup
+9. **Vector storage** - FAISS setup
 10. **External linkers** - Wikipedia, Semantic Scholar APIs
 
 ### Phase 3: Reading Interface (v0.3)
@@ -275,12 +272,11 @@ Follow this sequence for a logical build progression:
 26. **Reflection engine** - Time-based snapshot diffs
 27. **Collaborative features** - CRDT-based annotations
 
-### Phase 6: Ethics & Launch (v1.0)
-28. **Provenance system** - C2PA manifest implementation
-29. **Bias audit module** - RoBERTa sentiment analysis
-30. **Privacy compliance** - Differential privacy, GDPR
-31. **Analytics dashboard** - User ethics transparency
-32. **Performance optimization** - Caching, CDN setup
+### Phase 6: Launch (v1.0)
+28. **Performance optimization** - Caching, CDN setup
+
+The ethics suite (provenance, bias audit, privacy analytics) is deferred to
+the backlog; see REFOCUS_PLAN.md, Phase 4.
 
 ---
 
@@ -292,7 +288,7 @@ Follow this sequence for a logical build progression:
 
 **Step 1: Create parser.py**
 ```python
-# Implement PDF/EPUB parsing
+# Implement PDF parsing
 # - Use PyPDF2 or Apache Tika for PDF extraction
 # - Handle multi-column layouts
 # - Extract metadata (title, authors, abstract)
@@ -411,23 +407,9 @@ def calculate_next_review(
 
 ### E. Ethical Framework
 
-**Location:** `backend/app/services/ethics/`
-
-**Provenance Implementation:**
-```python
-# provenance.py
-# - C2PA manifest creation
-# - SHA-256 content fingerprinting
-# - DOI revalidation checks
-```
-
-**Bias Audit:**
-```python
-# audit.py
-# - Sentiment analysis with RoBERTa
-# - Perspective API integration
-# - Language inclusivity metrics
-```
+Deferred. The former `backend/app/services/ethics/` module (in-memory
+provenance, bias audit and privacy features) was removed; see REFOCUS_PLAN.md,
+Phase 4. Document ingestion still records a SHA-256 provenance hash.
 
 ---
 
@@ -524,13 +506,10 @@ def calculate_next_review(
 │   ├── POST /flashcards/{card_id}/review
 │   ├── GET /progress
 │   └── POST /export
-├── /scholar
-│   ├── GET /citations/{doc_id}
-│   ├── GET /credibility/{doc_id}
-│   └── POST /zotero/export
-└── /ethics
-    ├── GET /provenance/{doc_id}
-    └── GET /bias-report/{doc_id}
+└── /scholar
+    ├── GET /citations/{doc_id}
+    ├── GET /credibility/{doc_id}
+    └── POST /zotero/export
 ```
 
 ### Response Format
@@ -619,8 +598,6 @@ npm run cypress:run
 - [ ] ORCID OAuth2 integration (optional)
 
 ### Privacy
-- [ ] Differential privacy for analytics
-- [ ] User consent management system
 - [ ] Data retention policies (GDPR compliance)
 - [ ] Anonymization of tracking data
 
@@ -631,7 +608,6 @@ npm run cypress:run
 - [ ] CORS configuration
 
 ### Content Security
-- [ ] C2PA provenance verification
 - [ ] Copyright/license validation before ingestion
 - [ ] Rate limiting on external API calls
 

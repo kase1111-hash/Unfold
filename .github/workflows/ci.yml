@@ -34,6 +34,21 @@ jobs:
           --health-timeout 5s
           --health-retries 5
 
+      # Graph tests marked requires_neo4j run against this; without it they
+      # are skipped (see backend/tests/conftest.py).
+      neo4j:
+        image: neo4j:5.17-community
+        env:
+          NEO4J_AUTH: neo4j/testpassword
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p testpassword 'RETURN 1'"
+          --health-interval 10s
+          --health-timeout 10s
+          --health-start-period 30s
+          --health-retries 20
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -48,8 +63,11 @@ jobs:
         working-directory: ./backend
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-cov pytest-asyncio
+          # requirements-dev.txt includes requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Check dependency consistency
+        run: pip check
 
       - name: Download spaCy model
         run: python -m spacy download en_core_web_sm
@@ -60,6 +78,10 @@ jobs:
           DATABASE_URL: postgresql://test:test@localhost:5432/unfold_test
           ENVIRONMENT: test
           JWT_SECRET: test-secret-key
+          RATE_LIMIT_ENABLED: "false"
+          NEO4J_URI: bolt://localhost:7687
+          NEO4J_USER: neo4j
+          NEO4J_PASSWORD: testpassword
         run: |
           pytest --cov=app --cov-report=xml --cov-report=html -v
 
@@ -96,12 +118,12 @@ jobs:
 
       - name: Run type check
         working-directory: ./frontend
-        run: npm run type-check || true
+        run: npm run type-check
 
       - name: Build
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
         run: npm run build
 
   # E2E Tests
@@ -132,7 +154,7 @@ jobs:
       - name: Run E2E tests
         working-directory: ./frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
         run: npm run test:e2e -- --project=chromium
 
       - name: Upload Playwright report
@@ -205,8 +227,9 @@ jobs:
           push: true
           tags: ${{ steps.meta-frontend.outputs.tags }}
           labels: ${{ steps.meta-frontend.outputs.labels }}
+          # Same-origin default: nginx (docker-compose.prod.yml) routes /api/ to the backend.
           build-args: |
-            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || '/api/v1' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

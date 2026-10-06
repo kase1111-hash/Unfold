@@ -1,19 +1,7 @@
 """
 Caching services for performance optimization.
-Supports both in-memory LRU cache and Redis backend.
+Redis backend (optional; nothing in the request path depends on it).
 """
-
-from .cache import (
-    LRUCache,
-    CacheManager,
-    CacheEntry,
-    CacheStats,
-    get_cache_manager,
-    cached,
-    cache_invalidate,
-    make_cache_key,
-    start_cache_cleanup_task,
-)
 
 from .redis_cache import (
     RedisCache,
@@ -26,17 +14,6 @@ from .redis_cache import (
 )
 
 __all__ = [
-    # In-memory cache
-    "LRUCache",
-    "CacheManager",
-    "CacheEntry",
-    "CacheStats",
-    "get_cache_manager",
-    "cached",
-    "cache_invalidate",
-    "make_cache_key",
-    "start_cache_cleanup_task",
-    # Redis cache
     "RedisCache",
     "RedisCacheManager",
     "init_redis",

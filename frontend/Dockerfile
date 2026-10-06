@@ -6,9 +6,11 @@ FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies
+# Install dependencies. devDependencies are needed too: `next build` uses
+# typescript, tailwindcss and postcss. The runner stage only gets the
+# standalone output, which bundles the runtime modules it needs.
 COPY package.json package-lock.json* ./
-RUN npm ci --only=production
+RUN npm ci
 
 # Stage 2: Builder
 FROM node:20-alpine AS builder
@@ -25,8 +27,8 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Build the application
-RUN npm run build
+# Build the application. public/ is optional in the repo but copied below.
+RUN mkdir -p public && npm run build
 
 # Stage 3: Runner
 FROM node:20-alpine AS runner

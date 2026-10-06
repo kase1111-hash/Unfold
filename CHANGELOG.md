@@ -7,12 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
-- v0.2: Semantic graph + embeddings enhancements
-- v0.3: Reading interface MVP
-- v0.4: Adaptive focus mode
-- v0.5: Scholar Mode + reflection engine
-- v1.0: Ethics + provenance + public beta
+Focus on the core loop: PDF upload → knowledge graph → flashcards → spaced
+repetition (see REFOCUS_PLAN.md).
+
+### Added
+- `POST /api/v1/graph/documents/{doc_id}/build` rebuilds a document's graph
+  from its stored text (idempotent) and marks the document `indexed`.
+- The knowledge graph is built automatically in a background task after a
+  successful upload; the document status becomes `indexed` when it succeeds.
+- Flashcard endpoints: `GET/POST /api/v1/learning/flashcards`,
+  `DELETE /api/v1/learning/flashcards/{card_id}`; `flashcards/generate` takes a
+  `document_id` and reads the document text server-side.
+- `backend/requirements-dev.txt` for test and lint tools.
+
+### Changed
+- Flashcards and their SM2 review state are stored per user in PostgreSQL
+  (previously one in-memory scheduler shared by all users and lost on restart).
+- Documents, graph data and flashcards are scoped to their owner. Other users'
+  resources return 404, and `doc_id` is per owner (two users uploading the same
+  file get separate documents). All graph routes now require authentication.
+- Upload accepts PDF only. Failures return 400 with a code (`EMPTY_FILE`,
+  `CORRUPT_PDF`, `ENCRYPTED_PDF`, `NO_TEXT_EXTRACTED`) and leave no document or
+  file behind; 413 `FILE_TOO_LARGE`, 415 `UNSUPPORTED_TYPE`. The response holds
+  the processed document.
+- Any graph route returns 503 `GRAPH_UNAVAILABLE` when Neo4j is unreachable.
+- `GET /api/v1/health` and `/health/ready` return 503 when PostgreSQL is
+  unreachable, so container health checks fail.
+- Production/staging reject an empty `NEO4J_PASSWORD` and placeholder secrets
+  (any `JWT_SECRET`/`NEO4J_PASSWORD` containing "change").
+- The rate limiter keys on the peer address only; client-supplied
+  `X-Forwarded-For`/`X-Real-IP` are ignored. Behind nginx, uvicorn takes the
+  client IP from `X-Forwarded-For` (`FORWARDED_ALLOW_IPS` in
+  `docker-compose.prod.yml`), and nginx overwrites that header.
+- `NEXT_PUBLIC_API_URL` includes `/api/v1` (the frontend also appends it when
+  missing); production defaults to same-origin `/api/v1` behind nginx.
+- `docker-compose.prod.yml` requires `POSTGRES_PASSWORD`, `NEO4J_PASSWORD` and
+  `JWT_SECRET` (run it with `--env-file .env.production`) and runs
+  `alembic upgrade head` before starting the API.
+- The Neo4j admin user is always `neo4j`; the dev default password is
+  `changeme` everywhere. Neo4j applies `NEO4J_AUTH` only when its data volume
+  is created, so for an existing `neo4j-data` volume either reset the password
+  or recreate the volume (`docker compose down -v` deletes all local data).
+
+### Fixed
+- Backend CI: installable requirements (pytest-asyncio, bcrypt pins), the
+  `test` environment, a lifespan-managed test client, rate limiting disabled
+  in tests, a Neo4j service for the graph tests and a `pip check` step.
+- `GET /api/v1/graph/documents/{doc_id}/relations` no longer returns 500 for
+  graphs built by the extraction pipeline.
+- Graph node lookups accept the `node_id` values the list endpoints return.
+- Frontend type errors that broke the build, and the wiring of upload, graph
+  and flashcard pages to the API.
+- `/health/detailed` no longer fails once FAISS holds 2 or more vectors;
+  deleted FAISS vectors are no longer returned by search.
+- Zotero export accepts a numeric `year`.
+
+### Removed
+- Ethics module and `/api/v1/ethics/*` endpoints, EPUB ingestion, Pinecone and
+  LangChain (none were used by the core loop).
+- Unused backend code and dependencies: the in-memory cache module,
+  `aiohttp`, `python-docx`, and Tesseract in the backend image.
 
 ## [0.1.0] - 2025-01-23
 
@@ -110,7 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | 0.3.0 | Planned | Reading interface MVP |
 | 0.4.0 | Planned | Adaptive focus mode |
 | 0.5.0 | Planned | Scholar Mode + reflection engine |
-| 1.0.0 | Planned | Ethics + provenance + public beta |
+| 1.0.0 | Planned | Public beta (ethics suite deferred to the backlog, see REFOCUS_PLAN.md) |
 
 [Unreleased]: https://github.com/kase1111-hash/Unfold/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kase1111-hash/Unfold/releases/tag/v0.1.0

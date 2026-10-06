@@ -1,6 +1,25 @@
 """Tests for health check endpoints."""
 
+import pytest
 from fastapi.testclient import TestClient
+
+from app.api.v1.routes import health as health_routes
+
+
+@pytest.fixture
+def postgres_down(monkeypatch):
+    """Make the routes see PostgreSQL as unreachable."""
+
+    async def check_postgres_connection():
+        return {
+            "connected": False,
+            "status": "error",
+            "message": "PostgreSQL connection failed",
+        }
+
+    monkeypatch.setattr(
+        health_routes, "check_postgres_connection", check_postgres_connection
+    )
 
 
 class TestHealthEndpoints:
@@ -25,6 +44,16 @@ class TestHealthEndpoints:
         assert "timestamp" in data
         assert "version" in data
         assert "environment" in data
+
+    def test_health_check_503_when_postgres_down(
+        self, client: TestClient, api_prefix: str, postgres_down
+    ):
+        """A non-2xx status is what makes Docker's `curl -f` healthcheck fail."""
+        response = client.get(f"{api_prefix}/health")
+        assert response.status_code == 503
+        data = response.json()
+        assert data["status"] == "degraded"
+        assert data["environment"] == "test"
 
     def test_detailed_health_check(self, client: TestClient, api_prefix: str):
         """Test detailed health check returns service status."""
@@ -67,6 +96,21 @@ class TestHealthEndpoints:
         response = client.get(f"{api_prefix}/health/ready")
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
+
+    def test_readiness_probe_503_when_postgres_down(
+        self, client: TestClient, api_prefix: str, postgres_down
+    ):
+        response = client.get(f"{api_prefix}/health/ready")
+        assert response.status_code == 503
+        assert response.json() == {"status": "not_ready"}
+
+    def test_liveness_probe_ignores_postgres(
+        self, client: TestClient, api_prefix: str, postgres_down
+    ):
+        """Liveness only says the process is up; restarting won't fix the DB."""
+        response = client.get(f"{api_prefix}/health/live")
+        assert response.status_code == 200
+        assert response.json() == {"status": "alive"}
 
     def test_liveness_probe(self, client: TestClient, api_prefix: str):
         """Test Kubernetes liveness probe."""
