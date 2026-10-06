@@ -18,6 +18,7 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
     viewMode,
     paraphrasedContent,
     isParaphrasing,
+    paraphraseError,
     loadDocument,
   } = useReadingStore();
 
@@ -67,6 +68,13 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
 
   const technicalContent = documentContent || document.abstract || "No content available. The document may still be processing.";
   const simplifiedContent = paraphrasedContent || technicalContent;
+  // Shown inline in the simplified pane; a failed paraphrase keeps the document visible
+  const paraphraseErrorNotice =
+    paraphraseError && !isParaphrasing ? (
+      <p role="alert" className="text-sm text-red-500 mb-2">
+        Simplification failed: {paraphraseError}
+      </p>
+    ) : null;
 
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -103,7 +111,7 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
                 Original Text
               </div>
               <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
-                <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
                   {technicalContent}
                 </p>
               </div>
@@ -120,13 +128,14 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
                 </span>
               </div>
               <div className="prose prose-slate dark:prose-invert prose-sm max-w-none">
+                {paraphraseErrorNotice}
                 {isParaphrasing ? (
                   <div className="flex items-center gap-2 text-slate-500">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>Generating simplified version...</span>
                   </div>
                 ) : (
-                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg">
+                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg">
                     {simplifiedContent}
                   </p>
                 )}
@@ -136,18 +145,19 @@ export function DocumentViewer({ documentId }: DocumentViewerProps) {
         ) : (
           <div className="prose prose-slate dark:prose-invert max-w-none">
             {viewMode === "technical" ? (
-              <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+              <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap">
                 {technicalContent}
               </p>
             ) : (
               <>
+                {paraphraseErrorNotice}
                 {isParaphrasing ? (
                   <div className="flex items-center gap-2 text-slate-500">
                     <Loader2 className="w-4 h-4 animate-spin" />
                     <span>Generating simplified version...</span>
                   </div>
                 ) : (
-                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg">
+                  <p className="text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap bg-primary-50 dark:bg-primary-900/20 p-4 rounded-lg">
                     {simplifiedContent}
                   </p>
                 )}

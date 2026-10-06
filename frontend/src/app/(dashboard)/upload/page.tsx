@@ -73,12 +73,14 @@ export default function UploadPage() {
 
       // Redirect to reading view after a short delay
       setTimeout(() => {
-        router.push(`/read/${document.doc_id}`);
+        router.push(`/read/${encodeURIComponent(document.doc_id)}`);
       }, 1500);
     } catch (err) {
+      // e.g. 400 CORRUPT_PDF / ENCRYPTED_PDF / NO_TEXT_EXTRACTED, 413, 415
+      const message = getErrorMessage(err);
       setStatus("error");
-      setError(getErrorMessage(err));
-      toast.error("Failed to upload document");
+      setError(message);
+      toast.error(message);
     }
   };
 
@@ -197,14 +199,15 @@ export default function UploadPage() {
             {/* Success */}
             {status === "success" && (
               <p className="text-sm text-green-600 dark:text-green-400 text-center">
-                Upload successful! Redirecting to reading view...
+                Upload successful! The knowledge graph is being built in the
+                background. Redirecting to reading view...
               </p>
             )}
 
             {/* Error */}
             {status === "error" && (
               <div className="space-y-3">
-                <p className="text-sm text-red-600 dark:text-red-400 text-center">
+                <p role="alert" className="text-sm text-red-600 dark:text-red-400 text-center">
                   {error || "Upload failed. Please try again."}
                 </p>
                 <Button

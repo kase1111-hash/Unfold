@@ -1,8 +1,11 @@
 import { create } from "zustand";
 import type { Document, GraphNode, TextHighlight } from "@/types";
-import { api } from "@/services/api";
+import { api, getErrorMessage } from "@/services/api";
 
 type ViewMode = "technical" | "conceptual" | "hybrid";
+
+// Most recently requested document; responses for any other id are dropped
+let latestDocId: string | null = null;
 
 interface ReadingState {
   // Current document
@@ -18,6 +21,7 @@ interface ReadingState {
   // Paraphrased content
   paraphrasedContent: string | null;
   isParaphrasing: boolean;
+  paraphraseError: string | null;
 
   // Selection and interaction
   selectedText: string | null;
@@ -26,6 +30,8 @@ interface ReadingState {
 
   // Actions
   loadDocument: (docId: string) => Promise<void>;
+  // Replace the loaded document's metadata (e.g. a newer status) if it is still open
+  updateDocument: (document: Document) => void;
   setComplexity: (level: number) => void;
   setViewMode: (mode: ViewMode) => void;
   fetchParaphrase: () => Promise<void>;
@@ -45,17 +51,31 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
   viewMode: "hybrid",
   paraphrasedContent: null,
   isParaphrasing: false,
+  paraphraseError: null,
   selectedText: null,
   activeNodes: [],
   highlights: [],
 
   loadDocument: async (docId: string) => {
-    set({ isLoading: true, error: null });
+    latestDocId = docId;
+    set({
+      isLoading: true,
+      error: null,
+      document: null,
+      documentContent: null,
+      paraphrasedContent: null,
+      paraphraseError: null,
+      selectedText: null,
+      activeNodes: [],
+      highlights: [],
+    });
     try {
       const [document, contentResult] = await Promise.all([
         api.getDocument(docId),
         api.getDocumentContent(docId).catch(() => null),
       ]);
+      // Ignore the response if another document was opened meanwhile
+      if (latestDocId !== docId) return;
       set({
         document,
         documentContent: contentResult?.content || null,
@@ -63,11 +83,18 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
         paraphrasedContent: null,
       });
     } catch (error) {
+      if (latestDocId !== docId) return;
       set({
-        error: error instanceof Error ? error.message : "Failed to load document",
+        error: getErrorMessage(error),
         isLoading: false,
       });
     }
+  },
+
+  updateDocument: (document: Document) => {
+    set((state) =>
+      state.document?.doc_id === document.doc_id ? { document } : {}
+    );
   },
 
   setComplexity: (level: number) => {
@@ -82,19 +109,22 @@ export const useReadingStore = create<ReadingState>((set, get) => ({
     const { document, complexityLevel } = get();
     if (!document) return;
 
-    set({ isParaphrasing: true });
+    set({ isParaphrasing: true, paraphraseError: null });
     try {
       const result = await api.getDocumentParaphrase(
         document.doc_id,
         complexityLevel
       );
+      if (get().document?.doc_id !== document.doc_id) return;
       set({
         paraphrasedContent: result.content,
         isParaphrasing: false,
       });
     } catch (error) {
+      if (get().document?.doc_id !== document.doc_id) return;
+      // Do NOT write the page-level `error`: that replaces the whole document view.
       set({
-        error: error instanceof Error ? error.message : "Failed to paraphrase",
+        paraphraseError: getErrorMessage(error),
         isParaphrasing: false,
       });
     }

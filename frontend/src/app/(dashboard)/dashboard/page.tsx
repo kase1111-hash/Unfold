@@ -2,48 +2,52 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { FileText, Brain, TrendingUp, Clock, Plus } from "lucide-react";
+import { FileText, Brain, GraduationCap, Plus } from "lucide-react";
 import { api } from "@/services/api";
 import { useAuthStore } from "@/store";
-import type { Document } from "@/types";
+import type { Document, StudyStatsData } from "@/types";
 
 export default function DashboardPage() {
   const { user } = useAuthStore();
   const [recentDocs, setRecentDocs] = useState<Document[]>([]);
+  const [totalDocs, setTotalDocs] = useState<number | null>(null);
+  const [studyStats, setStudyStats] = useState<StudyStatsData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     api
       .getDocuments(1, 5)
-      .then((res) => setRecentDocs(res.data))
+      .then((res) => {
+        setRecentDocs(res.data);
+        setTotalDocs(res.pagination.total);
+      })
       .catch(() => setRecentDocs([]))
       .finally(() => setIsLoading(false));
+    api
+      .getStudyStats()
+      .then(setStudyStats)
+      .catch(() => setStudyStats(null));
   }, []);
 
+  // "-" when a number could not be loaded (never a made-up value)
   const stats = [
     {
       label: "Documents",
-      value: recentDocs.length,
+      value: totalDocs ?? "-",
       icon: FileText,
       color: "bg-blue-100 dark:bg-blue-900/30 text-blue-600",
     },
     {
-      label: "Concepts Learned",
-      value: 0,
-      icon: Brain,
+      label: "Cards Due",
+      value: studyStats?.due_now ?? "-",
+      icon: GraduationCap,
       color: "bg-purple-100 dark:bg-purple-900/30 text-purple-600",
     },
     {
-      label: "Reading Streak",
-      value: "0 days",
-      icon: TrendingUp,
+      label: "Flashcards",
+      value: studyStats?.total_cards ?? "-",
+      icon: Brain,
       color: "bg-green-100 dark:bg-green-900/30 text-green-600",
-    },
-    {
-      label: "Time Reading",
-      value: "0 hrs",
-      icon: Clock,
-      color: "bg-orange-100 dark:bg-orange-900/30 text-orange-600",
     },
   ];
 
@@ -60,10 +64,11 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {stats.map((stat) => (
           <div
             key={stat.label}
+            data-testid="stat-card"
             className="card p-5 flex items-center gap-4"
           >
             <div

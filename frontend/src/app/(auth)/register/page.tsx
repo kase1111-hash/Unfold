@@ -164,20 +164,8 @@ export default function RegisterPage() {
               className="w-4 h-4 mt-0.5 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
             />
             <span className="ml-2 text-sm text-slate-600 dark:text-slate-400">
-              I agree to the{" "}
-              <Link
-                href="/terms"
-                className="text-primary-600 hover:text-primary-700"
-              >
-                Terms of Service
-              </Link>{" "}
-              and{" "}
-              <Link
-                href="/privacy"
-                className="text-primary-600 hover:text-primary-700"
-              >
-                Privacy Policy
-              </Link>
+              {/* Plain text: there are no /terms or /privacy pages */}
+              I agree to the Terms of Service and Privacy Policy
             </span>
           </label>
           {errors.terms && (

@@ -81,6 +81,9 @@ export function StudyStats({ className }: StudyStatsProps) {
     );
   }
 
+  // Whole minutes, so 90 min reads "1h 30m" (not "2h 30m") and 119.7 never shows "60m"
+  const readingMinutes = Math.round(engagementProfile?.total_reading_time_minutes || 0);
+
   return (
     <div className={cn("space-y-6", className)}>
       {/* Flashcard Stats */}
@@ -169,8 +172,7 @@ export function StudyStats({ className }: StudyStatsProps) {
               </div>
             </div>
             <p className="text-lg font-bold text-slate-900 dark:text-white">
-              {Math.round((engagementProfile?.total_reading_time_minutes || 0) / 60)}h{" "}
-              {Math.round((engagementProfile?.total_reading_time_minutes || 0) % 60)}m
+              {Math.floor(readingMinutes / 60)}h {readingMinutes % 60}m
             </p>
           </div>
 

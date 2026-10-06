@@ -47,10 +47,10 @@ export default function HomePage() {
               Start Reading for Free
             </Link>
             <Link
-              href="/demo"
+              href="/login"
               className="btn-secondary text-lg px-8 py-3"
             >
-              Try Demo
+              Sign In
             </Link>
           </div>
         </div>

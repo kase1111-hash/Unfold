@@ -3,14 +3,14 @@ import { persist } from "zustand/middleware";
 import type { User } from "@/types";
 import { api } from "@/services/api";
 
+// "Authenticated" is simply `user !== null` once isInitialized is true. (It used
+// to be a JS getter in the state object, which zustand's set() flattens into a
+// static false, so derive it from `user` instead of storing it.)
 interface AuthState {
   user: User | null;
   isLoading: boolean;
   isInitialized: boolean;
   error: string | null;
-
-  // Computed property - derived from user state
-  isAuthenticated: boolean;
 
   // Actions
   login: (email: string, password: string) => Promise<void>;
@@ -32,11 +32,6 @@ export const useAuthStore = create<AuthState>()(
       isLoading: false,
       isInitialized: false,
       error: null,
-
-      // Computed: authenticated if we have a user
-      get isAuthenticated() {
-        return get().user !== null;
-      },
 
       login: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
@@ -134,3 +129,9 @@ export const useAuthStore = create<AuthState>()(
     }
   )
 );
+
+// A 401 that a token refresh could not fix ends the session; dropping the user
+// lets the dashboard layout redirect to /login.
+api.onAuthFailure(() => {
+  useAuthStore.setState({ user: null });
+});

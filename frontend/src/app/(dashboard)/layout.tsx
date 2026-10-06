@@ -8,11 +8,11 @@ import {
   Home,
   FileText,
   Brain,
-  Settings,
   LogOut,
   Upload,
   User,
   GraduationCap,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/utils/cn";
 import { useAuthStore } from "@/store";
@@ -24,7 +24,6 @@ const navItems = [
   { href: "/graph", label: "Knowledge Graph", icon: Brain },
   { href: "/flashcards", label: "Flashcards", icon: GraduationCap },
   { href: "/upload", label: "Upload", icon: Upload },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 export default function DashboardLayout({
@@ -34,20 +33,35 @@ export default function DashboardLayout({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, isAuthenticated, logout, fetchCurrentUser } = useAuthStore();
+  const { user, isInitialized, logout, initializeAuth } = useAuthStore();
 
+  // Validate the stored access token once on mount (initializeAuth never throws;
+  // it sets user=null + isInitialized=true when the token is missing/invalid).
   useEffect(() => {
-    if (!isAuthenticated) {
-      fetchCurrentUser().catch(() => {
-        router.push("/login");
-      });
-    }
-  }, [isAuthenticated, fetchCurrentUser, router]);
+    initializeAuth();
+  }, [initializeAuth]);
 
-  const handleLogout = () => {
-    logout();
-    router.push("/");
+  // Redirect only after validation has finished and no user was found.
+  useEffect(() => {
+    if (isInitialized && !user) {
+      router.replace("/login");
+    }
+  }, [isInitialized, user, router]);
+
+  const handleLogout = async () => {
+    await logout();
+    router.replace("/login");
   };
+
+  // Protected pages fire API calls on mount, so don't render them until the
+  // stored token has been validated (and while redirecting to /login).
+  if (!isInitialized || !user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
+        <Loader2 className="w-8 h-8 animate-spin text-primary-500" aria-label="Loading" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
@@ -116,7 +130,7 @@ export default function DashboardLayout({
       {/* Main content */}
       <main className="pl-64">
         <div className="min-h-screen p-8">
-          <PageErrorBoundary>{children}</PageErrorBoundary>
+          <PageErrorBoundary key={pathname}>{children}</PageErrorBoundary>
         </div>
       </main>
     </div>
