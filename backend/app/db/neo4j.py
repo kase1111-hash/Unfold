@@ -259,23 +259,28 @@ async def check_neo4j_connection() -> dict[str, str | bool]:
             "status": "healthy",
             "message": "Neo4j connection successful",
         }
+    # Health responses are public: log the driver's error text (it names
+    # hosts and addresses) instead of returning it.
     except AuthError as e:
+        logger.warning(f"Neo4j health check: authentication failed: {e}")
         return {
             "connected": False,
             "status": "auth_error",
-            "message": f"Authentication failed: {e}",
+            "message": "Neo4j authentication failed",
         }
     except ServiceUnavailable as e:
+        logger.warning(f"Neo4j health check: service unavailable: {e}")
         return {
             "connected": False,
             "status": "unavailable",
-            "message": f"Service unavailable: {e}",
+            "message": "Neo4j service unavailable",
         }
     except Exception as e:
+        logger.warning(f"Neo4j health check failed: {e}")
         return {
             "connected": False,
             "status": "error",
-            "message": str(e),
+            "message": "Neo4j health check failed",
         }
 
 
@@ -409,7 +414,8 @@ async def search_nodes(
         limit: Maximum results
 
     Returns:
-        List of matching nodes, or empty list if neo4j not available
+        List of matching nodes ordered by label, then node_id, or empty
+        list if neo4j not available
 
     Raises:
         Neo4jValidationError: If label is invalid
@@ -434,10 +440,12 @@ async def search_nodes(
 
     where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
+    # Ordered, so a limited result is always the same subset
     query = f"""
     MATCH (n{label_clause})
     {where_clause}
     RETURN n, labels(n) as labels, elementId(n) as id
+    ORDER BY n.label, n.node_id
     LIMIT $limit
     """
     result = await session.run(query, **params)

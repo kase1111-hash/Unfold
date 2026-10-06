@@ -1,5 +1,6 @@
 """Tests for document endpoints: auth, listing, validation and IDs."""
 
+import asyncio
 import hashlib
 
 import pytest
@@ -275,6 +276,81 @@ class TestUploadValidation:
         assert response.json()["detail"]["code"] == "FILE_TOO_LARGE"
         listing = client.get(f"{api_prefix}/documents", headers=auth_headers).json()
         assert listing["total"] == 0
+
+    @staticmethod
+    def _chunked_multipart(chunks: int, chunk_size: int, consumed: list[int]):
+        """A multipart file body as a generator: httpx sends it chunked,
+        without Content-Length. ``consumed`` counts the chunks pulled."""
+        boundary = "chunkedboundary"
+
+        def body():
+            yield (
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+                f"filename=\"big.pdf\"\r\nContent-Type: application/pdf\r\n\r\n"
+            ).encode()
+            for _ in range(chunks):
+                consumed.append(1)
+                yield b"A" * chunk_size
+            yield f"\r\n--{boundary}--\r\n".encode()
+
+        headers = {"Content-Type": f"multipart/form-data; boundary={boundary}"}
+        return body(), headers
+
+    def test_chunked_upload_over_limit_rejected(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """No Content-Length (chunked): the 413 comes from counting the body
+        as it is received, before authentication, not after parsing it all
+        (which used to answer 401 here, and only after spooling the body)."""
+        monkeypatch.setattr(documents_routes, "MAX_UPLOAD_BYTES", 4096)
+        monkeypatch.setattr(documents_routes, "MULTIPART_OVERHEAD_BYTES", 1024)
+        body, headers = self._chunked_multipart(64, 1024, [])
+
+        response = client.post(
+            f"{api_prefix}/documents/upload", content=body, headers=headers
+        )
+
+        assert response.status_code == 413
+        assert response.json()["detail"]["code"] == "FILE_TOO_LARGE"
+
+    def test_chunked_upload_stops_reading_at_limit(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Streamed over ASGI, the body is not read past the limit."""
+        import httpx
+
+        from app.main import app
+
+        monkeypatch.setattr(documents_routes, "MAX_UPLOAD_BYTES", 4096)
+        monkeypatch.setattr(documents_routes, "MULTIPART_OVERHEAD_BYTES", 1024)
+        consumed: list[int] = []
+        body, headers = self._chunked_multipart(1000, 1024, consumed)
+
+        async def stream_body():
+            for part in body:
+                # Like a network read, give the server a chance to respond
+                await asyncio.sleep(0)
+                yield part
+
+        async def post():
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as async_client:
+                return await async_client.post(
+                    "/api/v1/documents/upload", content=stream_body(), headers=headers
+                )
+
+        response = client.portal.call(post)
+
+        assert response.status_code == 413
+        assert response.json()["detail"]["code"] == "FILE_TOO_LARGE"
+        # 5 KiB allowed in 1 KiB chunks: the 413 went out right after the
+        # limit was crossed, not after the whole 1000 KiB were parsed
+        assert len(consumed) < 20, len(consumed)
 
     def test_upload_at_size_limit_accepted(
         self,

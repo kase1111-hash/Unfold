@@ -19,6 +19,7 @@ from fastapi import (
 from fastapi.routing import APIRoute
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.types import Message
 
 from app.api.v1.dependencies import CurrentUser, get_db
 from app.models.document import Document, DocumentStatus
@@ -50,23 +51,38 @@ def _file_too_large() -> HTTPException:
 
 
 class SizeLimitedRoute(APIRoute):
-    """Route that rejects an oversized body from its Content-Length header.
+    """Route that rejects an oversized request body with 413.
 
     FastAPI reads and parses a multipart body before any dependency or
     endpoint code runs, so the check wraps the route handler itself in
-    order to answer 413 without first receiving the whole upload.
+    order to answer 413 without first receiving the whole upload: from the
+    Content-Length header when there is one, and otherwise (a chunked body)
+    by counting the bytes as they arrive and stopping once there are too
+    many. FastAPI re-raises an HTTPException raised while it parses the form.
     """
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
 
         async def size_limited_handler(request: Request) -> Response:
+            limit = MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
             content_length = request.headers.get("content-length", "")
-            if (
-                content_length.isdigit()
-                and int(content_length) > MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
-            ):
+            if content_length.isdigit() and int(content_length) > limit:
                 raise _file_too_large()
+
+            receive = request._receive
+            received = 0
+
+            async def size_limited_receive() -> Message:
+                nonlocal received
+                message = await receive()
+                if message["type"] == "http.request":
+                    received += len(message.get("body", b""))
+                    if received > limit:
+                        raise _file_too_large()
+                return message
+
+            request._receive = size_limited_receive
             return await handler(request)
 
         return size_limited_handler
@@ -131,8 +147,9 @@ async def upload_document(
        "indexed" when that succeeds)
 
     A file that can't be processed is rejected with 400 and its error code
-    (EMPTY_FILE, CORRUPT_PDF, ENCRYPTED_PDF, NO_TEXT_EXTRACTED); nothing is
-    stored for it.
+    (EMPTY_FILE, CORRUPT_PDF, ENCRYPTED_PDF, NO_TEXT_EXTRACTED,
+    DOCUMENT_TOO_LARGE); nothing is stored for it. A body over the size
+    limit gets 413 FILE_TOO_LARGE.
 
     Args:
         file: The PDF file to upload
@@ -167,7 +184,8 @@ async def upload_document(
             },
         )
 
-    # Validate file size (also covers bodies sent without Content-Length)
+    # Validate the file's own size (the route class bounds the whole body,
+    # which includes the multipart framing)
     if len(file_content) > MAX_UPLOAD_BYTES:
         raise _file_too_large()
 
@@ -181,7 +199,7 @@ async def upload_document(
         )
 
     try:
-        document = await service.upload_document(
+        document, created = await service.upload_document(
             file_content=file_content,
             filename=file.filename or "document",
             content_type=file.content_type or "application/pdf",
@@ -193,9 +211,11 @@ async def upload_document(
             detail={"code": e.code, "message": e.message},
         )
 
-    # Build the knowledge graph after the response is sent. The task never
-    # raises; it marks the document INDEXED when nodes were created.
-    if document.status == DocumentStatus.VALIDATED:
+    # Build the knowledge graph after the response is sent, only for a new
+    # document: a re-upload of the same file returns the existing copy, whose
+    # graph is (being) built already or can be rebuilt explicitly. The task
+    # never raises; it marks the document INDEXED when nodes were created.
+    if created:
         background_tasks.add_task(build_document_graph_task, document.doc_id)
 
     return DocumentUploadResponse(
@@ -225,7 +245,8 @@ async def list_documents(
         status_filter: Optional status filter
 
     Returns:
-        Paginated list of documents
+        Paginated list of documents. graph_nodes is always [] here (a
+        document can have thousands); GET /documents/{doc_id} has the IDs.
     """
     documents, total = await service.list_documents(
         owner_id=current_user.user_id,
@@ -236,7 +257,7 @@ async def list_documents(
 
     return DocumentListResponse(
         status="success",
-        data=documents,
+        data=[d.model_copy(update={"graph_nodes": []}) for d in documents],
         total=total,
         page=page,
         page_size=min(page_size, 100),

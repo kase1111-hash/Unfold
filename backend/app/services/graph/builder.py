@@ -50,6 +50,21 @@ _NODE_FIELDS = {
 }
 
 
+# Entities whose label is longer than this are run-on text (table rows and
+# the like), not concepts; they are not stored.
+MAX_ENTITY_LABEL_CHARS = 300
+# GraphNode.label's limit; longer labels stored earlier are cut to it on read.
+MAX_NODE_LABEL_CHARS = 500
+
+
+def _new_node_id() -> str:
+    return f"node_{uuid4().hex}"
+
+
+def _new_relation_id() -> str:
+    return f"rel_{uuid4().hex}"
+
+
 def _normalize_label(text: str) -> str:
     """Collapse whitespace (including PDF line breaks) inside an entity label."""
     return " ".join(text.split())
@@ -73,7 +88,7 @@ def _node_from_properties(props: dict) -> GraphNode:
 
     return GraphNode(
         node_id=props.get("node_id", ""),
-        label=props.get("label", ""),
+        label=(props.get("label") or "")[:MAX_NODE_LABEL_CHARS],
         type=node_type,
         description=props.get("description"),
         source_doc_id=props.get("source_doc_id", ""),
@@ -128,6 +143,7 @@ class KnowledgeGraphBuilder:
         source_doc_id: str,
         extract_relations: bool = True,
         embeddings: list[list[float]] | None = None,
+        known_nodes: dict[str, str] | None = None,
     ) -> GraphBuildResult:
         """Build knowledge graph from text.
 
@@ -136,6 +152,10 @@ class KnowledgeGraphBuilder:
             source_doc_id: ID of source document
             extract_relations: Whether to extract relations between entities
             embeddings: Optional pre-computed embeddings for entities
+            known_nodes: Optional map of lowercased label -> node_id shared
+                across calls (one per document build). Entities already in
+                it are not created again, relations may link to them, and
+                the nodes created here are added to it.
 
         Returns:
             GraphBuildResult with statistics and IDs (node_ids are the
@@ -161,18 +181,27 @@ class KnowledgeGraphBuilder:
 
         # Step 2: Create nodes in Neo4j. entity_to_node_id maps the
         # normalized, lowercased label to the node_id property, which is what
-        # create_relationship matches on in step 3.
-        entity_to_node_id: dict[str, str] = {}
+        # create_relationship matches on in step 3. text_keys lists the keys
+        # of this text's own entities, in order.
+        entity_to_node_id: dict[str, str] = (
+            known_nodes if known_nodes is not None else {}
+        )
+        text_keys: list[str] = []
 
         async with get_neo4j_session_context() as session:
             for i, entity in enumerate(entities):
                 label = _normalize_label(entity.text)
                 key = label.lower()
-                if not label or key in entity_to_node_id:
-                    # Labels that only differed by line breaks collapse here
+                if not label or len(label) > MAX_ENTITY_LABEL_CHARS:
+                    continue
+                if key in entity_to_node_id:
+                    # Labels that only differed by line breaks collapse here,
+                    # as do entities already created from an earlier chunk
+                    if key not in text_keys:
+                        text_keys.append(key)
                     continue
                 try:
-                    node_id = f"node_{uuid4().hex[:12]}"
+                    node_id = _new_node_id()
 
                     # Get embedding if available
                     embedding = None
@@ -201,6 +230,7 @@ class KnowledgeGraphBuilder:
                         continue
 
                     entity_to_node_id[key] = node_id
+                    text_keys.append(key)
                     result.node_ids.append(node_id)
                     result.nodes_created += 1
 
@@ -232,14 +262,15 @@ class KnowledgeGraphBuilder:
                             target_id = entity_to_node_id.get(target_text)
 
                             if not source_id or not target_id:
-                                # Try partial matching for multi-word entities
+                                # Try partial matching for multi-word entities,
+                                # among this text's own entities only
                                 if not source_id:
-                                    for key in entity_to_node_id:
+                                    for key in text_keys:
                                         if source_text in key or key in source_text:
                                             source_id = entity_to_node_id[key]
                                             break
                                 if not target_id:
-                                    for key in entity_to_node_id:
+                                    for key in text_keys:
                                         if target_text in key or key in target_text:
                                             target_id = entity_to_node_id[key]
                                             break
@@ -264,7 +295,7 @@ class KnowledgeGraphBuilder:
                                 target_id=target_id,
                                 rel_type=rel_type_value,
                                 properties={
-                                    "relation_id": f"rel_{uuid4().hex[:12]}",
+                                    "relation_id": _new_relation_id(),
                                     "weight": _clamp_unit(relation.confidence),
                                     "confidence": relation.confidence,
                                     "context": relation.context or "",
@@ -312,7 +343,7 @@ class KnowledgeGraphBuilder:
         Returns:
             Created GraphNode
         """
-        node_id = f"node_{uuid4().hex[:12]}"
+        node_id = _new_node_id()
 
         async with get_neo4j_session_context() as session:
             await create_node(
@@ -368,7 +399,7 @@ class KnowledgeGraphBuilder:
         Returns:
             Created GraphRelation
         """
-        relation_id = f"rel_{uuid4().hex[:12]}"
+        relation_id = _new_relation_id()
 
         async with get_neo4j_session_context() as session:
             await create_relationship(

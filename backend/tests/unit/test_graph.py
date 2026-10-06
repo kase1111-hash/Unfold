@@ -16,7 +16,15 @@ from neo4j.exceptions import ServiceUnavailable, SessionExpired
 
 import app.api.v1.routes.graph as graph_routes
 import app.services.graph.builder as builder_module
-from app.models.graph import GraphNodeCreate, NodeType, RelationType
+import app.services.graph.document_graph as document_graph
+from app.api.v1.routes import documents as documents_routes
+from app.models.graph import (
+    GraphNode,
+    GraphNodeCreate,
+    NodeType,
+    RelationType,
+    check_flat_metadata,
+)
 from app.services.external import Author, Paper, WikipediaResult
 from app.services.graph.builder import KnowledgeGraphBuilder
 from app.services.graph.extractor import (
@@ -29,6 +37,7 @@ from app.services.graph.relations import (
     RelationExtractor,
     RuleBasedRelationExtractor,
 )
+from tests.pdf_utils import make_text_pdf
 
 
 def _require_spacy_model() -> None:
@@ -480,6 +489,133 @@ class TestGraphBuilder:
         assert props["type"] == "Concept"
         assert props["note"] == "kept"
 
+    def test_ids_use_a_full_uuid(self, fake_graph):
+        """node_id is the only match key, so 48 random bits were too few."""
+        entities = [_entity("alpha"), _entity("beta")]
+        builder = _builder(entities, SyncRelationExtractor([_relation("alpha", "beta")]))
+
+        result = asyncio.run(builder.build_from_text("text", source_doc_id="doc_1"))
+        node = asyncio.run(
+            builder.add_node(GraphNodeCreate(label="x", type=NodeType.CONCEPT, source_doc_id="d"))
+        )
+        relation = asyncio.run(
+            builder.add_relation(result.node_ids[0], result.node_ids[1], RelationType.EXPLAINS)
+        )
+
+        ids = result.node_ids + result.relation_ids + [node.node_id, relation.relation_id]
+        for full_id in ids:
+            prefix, _, hex_part = full_id.partition("_")
+            assert prefix in ("node", "rel")
+            assert len(hex_part) == 32
+            int(hex_part, 16)
+
+    def test_overlong_entity_labels_are_not_stored(self, fake_graph):
+        """Run-on text (table rows...) extracted as one 'entity' is skipped."""
+        long_label = "x" * (builder_module.MAX_ENTITY_LABEL_CHARS + 1)
+        longest_kept = "y" * builder_module.MAX_ENTITY_LABEL_CHARS
+        builder = _builder(
+            [_entity(long_label), _entity(longest_kept), _entity("radium")],
+            SyncRelationExtractor([_relation(long_label, "radium")]),
+        )
+
+        result = asyncio.run(builder.build_from_text("text", source_doc_id="doc_1"))
+
+        assert [n["properties"]["label"] for n in fake_graph.nodes] == [longest_kept, "radium"]
+        assert result.nodes_created == 2
+        assert result.relations_created == 0
+        assert result.errors == []
+
+    def test_known_nodes_are_shared_across_calls(self, fake_graph):
+        """One label -> node map per document build: an entity found again in
+        a later chunk is not created twice, and relations can reach it."""
+        known: dict[str, str] = {}
+        first = _builder([_entity("Marie Curie"), _entity("Paris")], SyncRelationExtractor([]))
+        first_result = asyncio.run(
+            first.build_from_text("chunk 1", source_doc_id="doc_1", known_nodes=known)
+        )
+        second = _builder(
+            [_entity("Marie\nCurie"), _entity("radium")],
+            SyncRelationExtractor(
+                [
+                    _relation("Marie Curie", "radium"),
+                    # 'Paris' is only an entity of the first chunk: exact
+                    # matches may use it ...
+                    _relation("radium", "Paris"),
+                    # ... but partial matching stays within this chunk
+                    _relation("radium", "Paris France"),
+                ]
+            ),
+        )
+
+        second_result = asyncio.run(
+            second.build_from_text("chunk 2", source_doc_id="doc_1", known_nodes=known)
+        )
+
+        labels = [n["properties"]["label"] for n in fake_graph.nodes]
+        assert labels == ["Marie Curie", "Paris", "radium"]
+        assert first_result.nodes_created == 2
+        assert second_result.nodes_created == 1
+        assert second_result.node_ids == [known["radium"]]
+        assert known == {
+            "marie curie": first_result.node_ids[0],
+            "paris": first_result.node_ids[1],
+            "radium": second_result.node_ids[0],
+        }
+        assert [(r["source_id"], r["target_id"]) for r in fake_graph.relationships] == [
+            (known["marie curie"], known["radium"]),
+            (known["radium"], known["paris"]),
+        ]
+
+    def test_without_known_nodes_each_call_is_independent(self, fake_graph):
+        """POST /graph/build (no shared map) keeps its old behaviour."""
+        builder = _builder([_entity("Marie Curie")], SyncRelationExtractor([]))
+
+        asyncio.run(builder.build_from_text("one", source_doc_id="doc_1"))
+        asyncio.run(builder.build_from_text("two", source_doc_id="doc_1"))
+
+        assert [n["properties"]["label"] for n in fake_graph.nodes] == ["Marie Curie"] * 2
+
+    def test_overlong_stored_label_is_truncated_on_read(self):
+        node = builder_module._node_from_properties(
+            {"node_id": "node_1", "label": "z" * 900, "type": "Concept", "source_doc_id": "d"}
+        )
+
+        assert node.label == "z" * 500
+
+
+class TestDocumentGraphBuild:
+    """build_document_graph over several chunks (Neo4j faked)."""
+
+    def test_entity_in_two_chunks_becomes_one_node(self, fake_graph, monkeypatch):
+        builder = _builder(
+            [_entity("Marie Curie", EntityType.PERSON), _entity("radium")],
+            SyncRelationExtractor([_relation("Marie Curie", "radium")]),
+        )
+        deleted: list[str] = []
+
+        async def delete_document_nodes(doc_id: str) -> int:
+            deleted.append(doc_id)
+            return 0
+
+        monkeypatch.setattr(builder, "delete_document_nodes", delete_document_nodes)
+        monkeypatch.setattr(document_graph, "get_graph_builder", lambda: builder)
+        paragraph = "Marie Curie studied radium. " * 1200
+        content = f"{paragraph}\n\n{paragraph}"
+        assert len(document_graph.chunk_text(document_graph.normalize_text(content))) == 2
+
+        result = asyncio.run(document_graph.build_document_graph("doc_1", content))
+
+        assert deleted == ["doc_1"]
+        assert len(builder.entity_extractor.thread_ids) == 2  # both chunks extracted
+        assert [n["properties"]["label"] for n in fake_graph.nodes] == ["Marie Curie", "radium"]
+        assert result.nodes_created == 2
+        assert result.node_ids == [n["properties"]["node_id"] for n in fake_graph.nodes]
+        # Each chunk's relation joins the same two nodes
+        assert result.relations_created == 2
+        assert {(r["source_id"], r["target_id"]) for r in fake_graph.relationships} == {
+            tuple(result.node_ids)
+        }
+
 
 class TestOpenAIRelationExtractor:
     """The 'async' OpenAI relation call must not block the event loop."""
@@ -601,6 +737,67 @@ class TestGraphAPIValidation:
         assert error["loc"] == ["body", "text"]
         assert error["type"] == "string_too_short"
 
+    def test_search_limit_up_to_1000(self, client, api_prefix, auth_headers, monkeypatch):
+        limits: list[int] = []
+
+        class FakeBuilder:
+            async def search_nodes(self, **kwargs):
+                limits.append(kwargs["limit"])
+                return []
+
+        monkeypatch.setattr(graph_routes, "get_graph_builder", lambda: FakeBuilder())
+
+        accepted = client.get(f"{api_prefix}/graph/nodes?limit=1000", headers=auth_headers)
+        rejected = client.get(f"{api_prefix}/graph/nodes?limit=1001", headers=auth_headers)
+
+        assert accepted.status_code == 200
+        assert accepted.json() == {"nodes": [], "total": 0}
+        assert limits == [1000]
+        assert rejected.status_code == 422
+        (error,) = rejected.json()["detail"]
+        assert error["loc"] == ["query", "limit"]
+        assert error["type"] == "less_than_equal"
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"nested": {"a": 1}},
+            {"list_of_objects": [{"a": 1}]},
+            {"nested_list": [[1, 2]]},
+            {"mixed_list": [1, "two"]},
+            {"bool_and_number": [True, 1]},
+            {"null_in_list": ["a", None]},
+            {"too_big": 2**63},
+            {"": "empty key"},
+        ],
+        ids=[
+            "object", "list-of-objects", "nested-list", "mixed-list",
+            "bool-and-number", "null-in-list", "int-over-64-bits", "empty-key",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("path", "body"),
+        [
+            ("/graph/nodes", {"label": "Radium", "type": "Concept", "source_doc_id": "doc_x"}),
+            (
+                "/graph/relations",
+                {"source_node_id": "node_a", "target_node_id": "node_b", "relation_type": "EXPLAINS"},
+            ),
+        ],
+        ids=["node", "relation"],
+    )
+    def test_metadata_must_be_flat(self, client, api_prefix, auth_headers, path, body, metadata):
+        """What Neo4j can't store as a property is a 422, not a 500 that
+        echoes the database's error."""
+        response = client.post(
+            f"{api_prefix}{path}", json={**body, "metadata": metadata}, headers=auth_headers
+        )
+
+        assert response.status_code == 422, response.text
+        (error,) = response.json()["detail"]
+        assert error["loc"] == ["body", "metadata"]
+        assert error["type"] == "value_error"
+
     def test_paper_search_requires_query(self, client, api_prefix, auth_headers):
         response = client.get(f"{api_prefix}/graph/link/papers", headers=auth_headers)
 
@@ -618,6 +815,119 @@ class TestGraphAPIValidation:
         (error,) = response.json()["detail"]
         assert error["loc"] == ["query", "limit"]
         assert error["type"] == "less_than_equal"
+
+
+class TestFlatMetadata:
+    """check_flat_metadata accepts what Neo4j stores as properties."""
+
+    def test_accepts_primitives_and_arrays_of_one_kind(self):
+        metadata = {
+            "name": "radium",
+            "year": 1898,
+            "score": 0.5,
+            "verified": False,
+            "missing": None,
+            "aliases": ["Ra", "element 88"],
+            "pages": [1, 2.5],
+            "flags": [True, False],
+            "empty": [],
+            "spaced key": 1,
+        }
+
+        assert check_flat_metadata(metadata) == metadata
+        assert check_flat_metadata(None) is None
+
+
+@pytest.fixture
+def owned_doc_id(client, api_prefix, auth_headers, monkeypatch) -> str:
+    """A document owned by ``auth_headers``' user (no graph build)."""
+
+    async def skip(doc_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(documents_routes, "build_document_graph_task", skip)
+    response = client.post(
+        f"{api_prefix}/documents/upload",
+        files={"file": ("curie.pdf", make_text_pdf(), "application/pdf")},
+        headers=auth_headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["document"]["doc_id"]
+
+
+DRIVER_ERROR = "{code: Neo.ClientError.Statement.TypeError} at graph-internal:7687"
+
+
+class TestGraphWriteErrors:
+    """Failed graph writes are reported without the driver's error text."""
+
+    def test_create_node_failure_is_generic(
+        self, client, api_prefix, auth_headers, owned_doc_id, monkeypatch
+    ):
+        class FailingBuilder:
+            async def add_node(self, request):
+                raise RuntimeError(DRIVER_ERROR)
+
+        monkeypatch.setattr(graph_routes, "get_graph_builder", lambda: FailingBuilder())
+
+        response = client.post(
+            f"{api_prefix}/graph/nodes",
+            json={"label": "Radium", "type": "Concept", "source_doc_id": owned_doc_id},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 500
+        assert response.json()["detail"] == {
+            "code": "NODE_CREATION_FAILED",
+            "message": "Failed to create the node",
+        }
+
+    @pytest.mark.parametrize(
+        ("error", "status_code", "detail"),
+        [
+            (
+                RuntimeError(DRIVER_ERROR),
+                500,
+                {"code": "RELATION_CREATION_FAILED", "message": "Failed to create the relation"},
+            ),
+            (
+                ValueError(DRIVER_ERROR),
+                404,
+                {"code": "NODE_NOT_FOUND", "message": "Source or target node not found"},
+            ),
+        ],
+        ids=["failure", "nodes-gone"],
+    )
+    def test_create_relation_failure_is_generic(
+        self,
+        client,
+        api_prefix,
+        auth_headers,
+        owned_doc_id,
+        monkeypatch,
+        error,
+        status_code,
+        detail,
+    ):
+        class FailingBuilder:
+            async def get_node(self, node_id):
+                return GraphNode(
+                    node_id=node_id, label=node_id, type=NodeType.CONCEPT, source_doc_id=owned_doc_id
+                )
+
+            async def add_relation(self, **kwargs):
+                raise error
+
+        monkeypatch.setattr(graph_routes, "get_graph_builder", lambda: FailingBuilder())
+
+        response = client.post(
+            f"{api_prefix}/graph/relations",
+            json={"source_node_id": "node_a", "target_node_id": "node_b", "relation_type": "EXPLAINS"},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status_code
+        assert response.json()["detail"] == detail
 
 
 class FakeWikipediaLinker:

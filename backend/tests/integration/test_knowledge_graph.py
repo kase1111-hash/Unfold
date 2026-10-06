@@ -7,19 +7,37 @@ tests run everywhere. Tests marked requires_neo4j need a reachable Neo4j
 when it is down (the usual developer setup).
 """
 
+import asyncio
+import threading
 import uuid
+from contextlib import asynccontextmanager
 
 import pytest
 from fastapi.testclient import TestClient
+from neo4j.exceptions import ServiceUnavailable
 
+import app.api.v1.routes.graph as graph_routes
+import app.services.graph.builder as builder_module
+import app.services.graph.document_graph as document_graph
+from app.api.v1.routes import documents as documents_routes
 from app.db import get_neo4j_session_context, get_session_context
+from app.models.document import DocumentStatus
 from app.repositories.document import DocumentRepository
+from app.services.graph.builder import GraphBuildResult
+from tests.integration.test_document_flow import (
+    document_status,
+    fake_build_result,
+    idle_in_transaction_connections,
+)
 from tests.pdf_utils import DEFAULT_LINES, make_text_pdf
 
 BUILD_TEXT = (
     "Marie Curie was a physicist who worked at the University of Paris. "
     "Marie Curie discovered polonium and radium with Pierre Curie."
 )
+
+# Driver error text that must never reach a response
+DRIVER_ERROR = "Couldn't connect to graph-internal.example:7687 (resolved to 10.20.30.40)"
 
 
 @pytest.fixture
@@ -37,6 +55,55 @@ def graph_document(client: TestClient, api_prefix: str, auth_headers: dict) -> d
     )
     assert response.status_code == 201, response.text
     return response.json()["document"]
+
+
+@pytest.fixture
+def no_background_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Uploads in this test schedule no graph build."""
+
+    async def skip(doc_id: str) -> None:
+        return None
+
+    monkeypatch.setattr(documents_routes, "build_document_graph_task", skip)
+
+
+def _upload_unique(client: TestClient, api_prefix: str, headers: dict) -> dict:
+    pdf = make_text_pdf(DEFAULT_LINES + [f"Reference code {uuid.uuid4().hex[:8]}."])
+    response = client.post(
+        f"{api_prefix}/documents/upload",
+        files={"file": ("curie.pdf", pdf, "application/pdf")},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["document"]
+
+
+@pytest.fixture
+def empty_graph_document(
+    client: TestClient, api_prefix: str, auth_headers: dict, no_background_build: None
+) -> dict:
+    """Like graph_document, but no graph is built for it."""
+    return _upload_unique(client, api_prefix, auth_headers)
+
+
+def _create_node(client: TestClient, api_prefix: str, headers: dict, doc_id: str, label: str) -> str:
+    response = client.post(
+        f"{api_prefix}/graph/nodes",
+        json={"label": label, "type": "Concept", "source_doc_id": doc_id},
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["node_id"]
+
+
+def _set_document_state(client: TestClient, doc_id: str, status: DocumentStatus, node_ids: list[str]):
+    async def update():
+        async with get_session_context() as session:
+            repo = DocumentRepository(session)
+            assert await repo.set_graph_nodes(doc_id, node_ids)
+            await repo.update_status(doc_id, status)
+
+    client.portal.call(update)
 
 
 def _assert_graph_unavailable(response) -> None:
@@ -213,6 +280,209 @@ class TestGraphUnavailable:
             headers=auth_headers,
         )
         _assert_graph_unavailable(response)
+
+
+@pytest.fixture
+def graph_outage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every graph-database session fails as if Neo4j were down."""
+
+    @asynccontextmanager
+    async def unreachable():
+        raise ServiceUnavailable(DRIVER_ERROR)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(builder_module, "get_neo4j_session_context", unreachable)
+
+
+class TestGraphOutageContract:
+    """503 GRAPH_UNAVAILABLE without the driver's text, whether or not a real
+    Neo4j is running (the requires_no_neo4j tests above never run in CI)."""
+
+    @pytest.mark.parametrize(
+        ("method", "path", "body"),
+        [
+            ("get", "/graph/nodes", None),
+            ("get", "/graph/nodes?source_doc_id={doc}", None),
+            ("get", "/graph/nodes/node_123", None),
+            ("get", "/graph/nodes/node_123/related", None),
+            ("get", "/graph/documents/{doc}/relations", None),
+            ("post", "/graph/documents/{doc}/build", None),
+            ("post", "/graph/nodes", {"label": "Radium", "type": "Concept", "source_doc_id": "{doc}"}),
+            (
+                "post",
+                "/graph/relations",
+                {"source_node_id": "node_1", "target_node_id": "node_2", "relation_type": "EXPLAINS"},
+            ),
+            ("delete", "/graph/documents/{doc}/nodes", None),
+        ],
+    )
+    def test_route_reports_graph_unavailable(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+        graph_outage: None,
+        method: str,
+        path: str,
+        body: dict | None,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        kwargs = {}
+        if body is not None:
+            kwargs["json"] = {
+                k: (v.format(doc=doc_id) if isinstance(v, str) else v) for k, v in body.items()
+            }
+
+        response = getattr(client, method)(
+            f"{api_prefix}{path.format(doc=doc_id)}", headers=auth_headers, **kwargs
+        )
+
+        _assert_graph_unavailable(response)
+        assert "graph-internal" not in response.text
+        assert "10.20.30.40" not in response.text
+
+    def test_rebuild_outage_returns_document_to_validated(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+        graph_outage: None,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        _set_document_state(client, doc_id, DocumentStatus.INDEXED, ["node_old"])
+
+        response = client.post(
+            f"{api_prefix}/graph/documents/{doc_id}/build", headers=auth_headers
+        )
+
+        _assert_graph_unavailable(response)
+        assert client.portal.call(document_status, doc_id) == "validated"
+
+
+class PausedBuild:
+    """Stands in for build_document_graph and waits until released."""
+
+    def __init__(self, result: GraphBuildResult):
+        self.result = result
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls: list[str] = []
+        self.idle_in_transaction: list[int] = []
+
+    async def __call__(self, doc_id: str, content: str) -> GraphBuildResult:
+        self.calls.append(doc_id)
+        self.idle_in_transaction.append(await idle_in_transaction_connections())
+        self.started.set()
+        while not self.release.is_set():
+            await asyncio.sleep(0.01)
+        return self.result
+
+
+class TestDocumentRebuild:
+    """POST /graph/documents/{id}/build with the graph build replaced."""
+
+    def test_conflict_while_building_and_status_transitions(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        url = f"{api_prefix}/graph/documents/{doc_id}/build"
+        paused = PausedBuild(fake_build_result("node_a", "node_b"))
+        monkeypatch.setattr(graph_routes, "build_document_graph", paused)
+        monkeypatch.setattr(document_graph, "build_document_graph", paused)
+        safety = threading.Timer(20, paused.release.set)  # never hang the suite
+        safety.start()
+        results: list = []
+        first = threading.Thread(target=lambda: results.append(client.post(url, headers=auth_headers)))
+        first.start()
+        try:
+            assert paused.started.wait(10)
+            status_during = client.portal.call(document_status, doc_id)
+            second = client.post(url, headers=auth_headers)
+            # A background build of the same document is skipped, not run
+            client.portal.call(document_graph.build_document_graph_task, doc_id)
+        finally:
+            paused.release.set()
+            first.join(30)
+            safety.cancel()
+
+        assert status_during == "processing"
+        assert second.status_code == 409, second.text
+        assert second.json()["detail"]["code"] == "BUILD_IN_PROGRESS"
+        assert paused.calls == [doc_id]
+        # The request's transaction was over before the build started
+        assert paused.idle_in_transaction == [0]
+        (response,) = results
+        assert response.status_code == 200, response.text
+        assert response.json()["nodes_created"] == 2
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).json()
+        assert document["status"] == "indexed"
+        assert document["graph_nodes"] == ["node_a", "node_b"]
+        # The lock is released afterwards
+        assert client.post(url, headers=auth_headers).status_code == 200
+
+    def test_rebuild_without_nodes_clears_graph_nodes(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        _set_document_state(client, doc_id, DocumentStatus.INDEXED, ["node_stale_1", "node_stale_2"])
+
+        async def build(doc_id: str, content: str) -> GraphBuildResult:
+            return fake_build_result()
+
+        monkeypatch.setattr(graph_routes, "build_document_graph", build)
+
+        response = client.post(
+            f"{api_prefix}/graph/documents/{doc_id}/build", headers=auth_headers
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["nodes_created"] == 0
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).json()
+        assert document["graph_nodes"] == []
+        assert document["status"] == "validated"
+
+    def test_rebuild_of_document_deleted_meanwhile(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        graph_deletes: list[str] = []
+
+        async def record_graph_delete(doc_id: str) -> int:
+            graph_deletes.append(doc_id)
+            return 0
+
+        async def delete_then_build(doc_id: str, content: str) -> GraphBuildResult:
+            async with get_session_context() as session:
+                await DocumentRepository(session).delete(doc_id)
+            return fake_build_result("node_a")
+
+        monkeypatch.setattr(document_graph, "delete_document_graph", record_graph_delete)
+        monkeypatch.setattr(graph_routes, "build_document_graph", delete_then_build)
+
+        response = client.post(
+            f"{api_prefix}/graph/documents/{doc_id}/build", headers=auth_headers
+        )
+
+        _assert_not_found(response)
+        # The graph the build wrote for the deleted document is removed again
+        assert graph_deletes == [doc_id]
 
 
 @pytest.mark.requires_neo4j
@@ -399,6 +669,202 @@ class TestGraphNodeOperations:
             assert fetched.status_code == 200
             assert fetched.json()["node_id"] == node_id
 
+    def test_other_user_cannot_link_owners_nodes(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        other_auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        a = _create_node(client, api_prefix, auth_headers, doc_id, "Polonium")
+        b = _create_node(client, api_prefix, auth_headers, doc_id, "Radium")
+
+        response = client.post(
+            f"{api_prefix}/graph/relations",
+            json={"source_node_id": a, "target_node_id": b, "relation_type": "EXPLAINS"},
+            headers=other_auth_headers,
+        )
+
+        _assert_not_found(response, "NODE_NOT_FOUND")
+        relations = client.get(
+            f"{api_prefix}/graph/documents/{doc_id}/relations", headers=auth_headers
+        )
+        assert relations.json() == {"relations": [], "total": 0}
+
+    def test_relation_needs_both_nodes_owned_by_caller(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        other_auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        my_doc = empty_graph_document["doc_id"]
+        their_doc = _upload_unique(client, api_prefix, other_auth_headers)["doc_id"]
+        mine = _create_node(client, api_prefix, auth_headers, my_doc, "Polonium")
+        theirs = _create_node(client, api_prefix, other_auth_headers, their_doc, "Radium")
+
+        for source, target in ((mine, theirs), (theirs, mine)):
+            response = client.post(
+                f"{api_prefix}/graph/relations",
+                json={"source_node_id": source, "target_node_id": target, "relation_type": "EXPLAINS"},
+                headers=auth_headers,
+            )
+            _assert_not_found(response, "NODE_NOT_FOUND")
+
+        for doc, headers in ((my_doc, auth_headers), (their_doc, other_auth_headers)):
+            relations = client.get(f"{api_prefix}/graph/documents/{doc}/relations", headers=headers)
+            assert relations.json() == {"relations": [], "total": 0}
+
+    def test_related_nodes_never_include_other_users_nodes(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        other_auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        my_doc = empty_graph_document["doc_id"]
+        their_doc = _upload_unique(client, api_prefix, other_auth_headers)["doc_id"]
+        start = _create_node(client, api_prefix, auth_headers, my_doc, "Marie Curie")
+        mine = _create_node(client, api_prefix, auth_headers, my_doc, "Radium")
+        theirs = _create_node(client, api_prefix, other_auth_headers, their_doc, "Polonium")
+
+        async def link(source: str, target: str) -> None:
+            # The API refuses cross-user edges, so seed one directly
+            async with get_neo4j_session_context() as session:
+                result = await session.run(
+                    "MATCH (a {node_id: $a}), (b {node_id: $b}) "
+                    "CREATE (a)-[:RELATED_TO {relation_id: $rid}]->(b)",
+                    a=source,
+                    b=target,
+                    rid=f"rel_{uuid.uuid4().hex}",
+                )
+                await result.consume()
+
+        client.portal.call(link, start, mine)
+        client.portal.call(link, start, theirs)
+
+        related = client.get(
+            f"{api_prefix}/graph/nodes/{start}/related",
+            params={"max_depth": 1},
+            headers=auth_headers,
+        )
+
+        assert _node_ids(related) == {mine}
+        assert related.json()["total"] == 1
+
+    def test_overlong_stored_label_is_truncated_when_listed(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        """Builds used to store run-on 'entities' over GraphNode's 500-char
+        limit; one such node made the document's whole listing a 500."""
+        doc_id = empty_graph_document["doc_id"]
+        node_id = _create_node(client, api_prefix, auth_headers, doc_id, "placeholder")
+        long_label = " ".join(f"value{i} measurement" for i in range(60))
+        assert len(long_label) > 800
+
+        async def store_long_label():
+            async with get_neo4j_session_context() as session:
+                result = await session.run(
+                    "MATCH (n {node_id: $id}) SET n.label = $label", id=node_id, label=long_label
+                )
+                await result.consume()
+
+        client.portal.call(store_long_label)
+
+        by_doc = client.get(
+            f"{api_prefix}/graph/nodes",
+            params={"source_doc_id": doc_id, "limit": 100},
+            headers=auth_headers,
+        )
+        everything = client.get(f"{api_prefix}/graph/nodes", params={"limit": 200}, headers=auth_headers)
+        single = client.get(f"{api_prefix}/graph/nodes/{node_id}", headers=auth_headers)
+
+        assert by_doc.status_code == 200, by_doc.text
+        assert [n["label"] for n in by_doc.json()["nodes"]] == [long_label[:500]]
+        assert everything.status_code == 200, everything.text
+        assert single.status_code == 200, single.text
+        assert single.json()["label"] == long_label[:500]
+
+    def test_flat_metadata_with_arrays_is_stored(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        doc_id = empty_graph_document["doc_id"]
+        metadata = {
+            "aliases": ["Po", "element 84"],
+            "year": 1898,
+            "half_life_days": 138.4,
+            "radioactive": True,
+            "pages": [3, 4.5],
+            "empty": [],
+        }
+        created = client.post(
+            f"{api_prefix}/graph/nodes",
+            json={"label": "Polonium", "type": "Concept", "source_doc_id": doc_id, "metadata": metadata},
+            headers=auth_headers,
+        )
+        assert created.status_code == 201, created.text
+        other = _create_node(client, api_prefix, auth_headers, doc_id, "Radium")
+
+        relation = client.post(
+            f"{api_prefix}/graph/relations",
+            json={
+                "source_node_id": created.json()["node_id"],
+                "target_node_id": other,
+                "relation_type": "RELATED_TO",
+                "metadata": {"pages": [1, 2], "note": "same paper"},
+            },
+            headers=auth_headers,
+        )
+
+        assert relation.status_code == 201, relation.text
+        fetched = client.get(
+            f"{api_prefix}/graph/nodes/{created.json()['node_id']}", headers=auth_headers
+        ).json()
+        stored = {k: fetched["metadata"][k] for k in metadata}
+        assert stored == {**metadata, "pages": [3.0, 4.5]}
+
+    def test_search_is_ordered_by_label_then_node_id(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        """A limited result is always the same subset (it used to be
+        whatever Neo4j returned first), and up to 1000 nodes come back."""
+        doc_id = empty_graph_document["doc_id"]
+        for label in ("Zeta", "Alpha", "Mu", "Mu", "Beta"):
+            _create_node(client, api_prefix, auth_headers, doc_id, label)
+
+        listed = client.get(
+            f"{api_prefix}/graph/nodes",
+            params={"source_doc_id": doc_id, "limit": 1000},
+            headers=auth_headers,
+        )
+        first_two = client.get(
+            f"{api_prefix}/graph/nodes",
+            params={"source_doc_id": doc_id, "limit": 2},
+            headers=auth_headers,
+        )
+
+        assert listed.status_code == 200, listed.text
+        pairs = [(n["label"], n["node_id"]) for n in listed.json()["nodes"]]
+        assert [label for label, _ in pairs] == ["Alpha", "Beta", "Mu", "Mu", "Zeta"]
+        assert pairs == sorted(pairs)
+        assert [(n["label"], n["node_id"]) for n in first_two.json()["nodes"]] == pairs[:2]
+
 
 @pytest.mark.requires_neo4j
 class TestDocumentGraphRoundTrip:
@@ -479,6 +945,10 @@ class TestDocumentGraphRoundTrip:
         assert len(node_ids) == built["nodes_created"]
         relations = client.get(f"{graph}/documents/{doc_id}/relations", headers=auth_headers)
         assert relations.json()["total"] == rebuild.json()["relations_created"]
+        # The stored node IDs are replaced too, not merged with the old ones
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).json()
+        assert document["status"] == "indexed"
+        assert sorted(document["graph_nodes"]) == sorted(node_ids)
 
         # An unfiltered search is scoped to the caller's documents
         mine = client.get(f"{graph}/nodes", params={"limit": 200}, headers=auth_headers)

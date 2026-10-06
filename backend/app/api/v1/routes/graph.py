@@ -20,6 +20,7 @@ from app.db import GRAPH_UNAVAILABLE_ERRORS
 from app.db.models.document import DocumentORM
 from app.models.document import DocumentStatus
 from app.models.graph import (
+    FlatMetadata,
     GraphNode,
     GraphNodeCreate,
     GraphRelation,
@@ -29,7 +30,13 @@ from app.models.graph import (
 from app.models.user import User
 from app.repositories.document import DocumentRepository
 from app.services.graph import get_graph_builder, get_embedding_service
-from app.services.graph.document_graph import build_document_graph
+from app.services.graph.document_graph import (
+    BuildInProgressError,
+    build_document_graph,
+    exclusive_build,
+    mark_build_failed,
+    save_build_result,
+)
 from app.services.external import get_wikipedia_linker, get_semantic_scholar_linker
 
 logger = logging.getLogger(__name__)
@@ -80,7 +87,9 @@ class CreateRelationRequest(BaseModel):
     target_node_id: str = Field(..., description="Target node ID (node_id)")
     relation_type: RelationType = Field(..., description="Type of relation")
     weight: float = Field(1.0, ge=0.0, le=1.0, description="Relation strength")
-    metadata: dict | None = Field(None, description="Optional metadata")
+    metadata: FlatMetadata = Field(
+        None, description="Optional metadata: a flat object of primitives"
+    )
 
 
 class NodeListResponse(BaseModel):
@@ -201,7 +210,9 @@ async def build_graph_for_document(
     """Rebuild a document's graph from its stored text.
 
     Existing nodes for the document are replaced, so this is safe to call
-    again. Marks the document as indexed when nodes were created.
+    again. The document is PROCESSING during the build, then INDEXED when
+    nodes were created (VALIDATED otherwise, or if the build fails). Answers
+    409 BUILD_IN_PROGRESS while another build of the document is running.
     """
     await get_owned_document(db, doc_id, current_user)
 
@@ -216,12 +227,37 @@ async def build_graph_for_document(
             },
         )
 
-    result = await build_document_graph(doc_id, content)
+    try:
+        async with exclusive_build(doc_id):
+            await repo.update_status(doc_id, DocumentStatus.PROCESSING)
+            # End the transaction (and return the connection) before the
+            # build, which can outlast PostgreSQL's idle-in-transaction limit
+            await db.commit()
 
-    # The rebuild replaced every node, so replace the stored IDs too.
-    await repo.set_graph_nodes(doc_id, result.node_ids)
-    if result.nodes_created:
-        await repo.update_status(doc_id, DocumentStatus.INDEXED)
+            try:
+                result = await build_document_graph(doc_id, content)
+                # The rebuild replaced every node, so replace the stored IDs too
+                saved = await save_build_result(repo, doc_id, result)
+            except BaseException:
+                # Release any row lock first: the reset uses its own session
+                await db.rollback()
+                await mark_build_failed(doc_id)
+                raise
+    except BuildInProgressError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BUILD_IN_PROGRESS",
+                "message": "The knowledge graph for this document is already being built",
+            },
+        )
+
+    if not saved:
+        # The document was deleted while it was being built
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Document {doc_id} not found"},
+        )
 
     return DocumentGraphBuildResponse(
         doc_id=doc_id,
@@ -255,10 +291,12 @@ async def create_node(
         return node
     except GRAPH_UNAVAILABLE_ERRORS:
         raise
-    except Exception as e:
+    except Exception:
+        # The driver's error text stays in the log, not in the response
+        logger.exception("Failed to create graph node")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "NODE_CREATION_FAILED", "message": str(e)},
+            detail={"code": "NODE_CREATION_FAILED", "message": "Failed to create the node"},
         )
 
 
@@ -292,17 +330,23 @@ async def create_relation(
             metadata=request.metadata,
         )
         return relation
-    except ValueError as e:
+    except ValueError:
+        # create_relationship matched no node pair
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NODE_NOT_FOUND", "message": str(e)},
+            detail={"code": "NODE_NOT_FOUND", "message": "Source or target node not found"},
         )
     except GRAPH_UNAVAILABLE_ERRORS:
         raise
-    except Exception as e:
+    except Exception:
+        # The driver's error text stays in the log, not in the response
+        logger.exception("Failed to create graph relation")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "RELATION_CREATION_FAILED", "message": str(e)},
+            detail={
+                "code": "RELATION_CREATION_FAILED",
+                "message": "Failed to create the relation",
+            },
         )
 
 
@@ -331,9 +375,10 @@ async def search_nodes(
     query: str | None = Query(None, description="Text query to match labels"),
     node_type: NodeType | None = Query(None, description="Filter by node type"),
     source_doc_id: str | None = Query(None, description="Filter by source document"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
 ) -> NodeListResponse:
-    """Search for nodes in the caller's documents."""
+    """Search for nodes in the caller's documents, ordered by label (then
+    node_id), so a limited result is always the same subset."""
     builder = get_graph_builder()
 
     if source_doc_id:

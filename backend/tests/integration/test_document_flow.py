@@ -3,19 +3,56 @@ Integration tests for the document ingestion and management flow.
 Tests the complete lifecycle: upload -> validate -> process -> retrieve -> delete
 """
 
+import asyncio
 import io
+import threading
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from neo4j.exceptions import ServiceUnavailable
 from pypdf import PdfReader, PdfWriter
+from sqlalchemy import text
 
+import app.services.graph.document_graph as document_graph
+import app.services.ingestion.document_service as document_service
 from app.api.v1.routes import documents as documents_routes
-from app.db import get_neo4j_session_context
+from app.db import get_neo4j_session_context, get_session_context
+from app.repositories.document import DocumentRepository
+from app.services.graph.builder import GraphBuildResult
 from app.services.ingestion.document_service import DocumentService
 from tests.pdf_utils import DEFAULT_LINES, make_text_pdf
 
 EXPECTED_WORD_COUNT = sum(len(line.split()) for line in DEFAULT_LINES)
+
+# Connections of this database sitting idle inside an open transaction,
+# other than the one asking
+IDLE_IN_TRANSACTION_SQL = text(
+    "SELECT count(*) FROM pg_stat_activity "
+    "WHERE datname = current_database() AND pid <> pg_backend_pid() "
+    "AND state LIKE 'idle in transaction%'"
+)
+
+
+async def idle_in_transaction_connections() -> int:
+    async with get_session_context() as session:
+        return (await session.execute(IDLE_IN_TRANSACTION_SQL)).scalar_one()
+
+
+async def document_status(doc_id: str) -> str | None:
+    async with get_session_context() as session:
+        document = await DocumentRepository(session).get_by_id(doc_id)
+        return document.status.value if document else None
+
+
+def fake_build_result(*node_ids: str) -> GraphBuildResult:
+    return GraphBuildResult(
+        nodes_created=len(node_ids),
+        relations_created=0,
+        node_ids=list(node_ids),
+        relation_ids=[],
+        errors=[],
+    )
 
 
 def _upload(client: TestClient, api_prefix: str, headers: dict, name: str, data: bytes):
@@ -48,6 +85,15 @@ def _encrypted_pdf(user_password: str) -> bytes:
 def _blank_pdf() -> bytes:
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
+    out = io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
+
+
+def _two_page_pdf() -> bytes:
+    writer = PdfWriter()
+    for line in ("Page one about Marie Curie.", "Page two about Pierre Curie."):
+        writer.append(PdfReader(io.BytesIO(make_text_pdf(line))))
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
@@ -156,8 +202,80 @@ class TestUploadSuccess:
         assert second.json()["document"]["status"] == "validated"
         listing = _list(client, api_prefix, auth_headers)
         assert listing["total"] == 1
-        # Not indexed yet (the build was stubbed), so the re-upload retries it
-        assert graph_build_calls == [doc_id, doc_id]
+        # Only the upload that created the document schedules a build; a
+        # re-upload never starts another one (rebuilding is explicit)
+        assert graph_build_calls == [doc_id]
+
+    def test_concurrent_identical_uploads_store_one_document(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        graph_build_calls: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """A double click: both requests pass the 'already uploaded?' check
+        before either stores the row. The second used to get a 500
+        (UniqueViolation); now both get the one document and one build."""
+        real_create = DocumentRepository.create
+        arrived: list[int] = []
+        both_arrived = asyncio.Event()
+
+        async def create_together(self, **kwargs):
+            # Hold each request at the INSERT until both are past the check
+            arrived.append(1)
+            if len(arrived) == 2:
+                both_arrived.set()
+            await asyncio.wait_for(both_arrived.wait(), 10)
+            return await real_create(self, **kwargs)
+
+        monkeypatch.setattr(DocumentRepository, "create", create_together)
+        results: list = []
+
+        def upload():
+            try:
+                results.append(_upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf))
+            except Exception as e:  # a server error surfaces here in TestClient
+                results.append(e)
+
+        threads = [threading.Thread(target=upload) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+
+        assert [getattr(r, "status_code", repr(r)) for r in results] == [201, 201]
+        doc_ids = {r.json()["document"]["doc_id"] for r in results}
+        assert len(doc_ids) == 1
+        assert graph_build_calls == list(doc_ids)
+        assert _list(client, api_prefix, auth_headers)["total"] == 1
+
+    def test_pdf_text_extracted_off_the_event_loop(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """pypdf is CPU-bound: a small crafted PDF used to freeze every
+        request for tens of seconds while it was parsed on the loop."""
+        threads: list[int] = []
+        extract = DocumentService._extract_pdf_content
+
+        def recording_extract(self, file_content):
+            threads.append(threading.get_ident())
+            return extract(self, file_content)
+
+        monkeypatch.setattr(DocumentService, "_extract_pdf_content", recording_extract)
+        loop_thread = client.portal.call(threading.get_ident)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        assert len(threads) == 1
+        assert threads[0] != loop_thread
 
     def test_pdf_encrypted_with_empty_user_password_accepted(
         self, client: TestClient, api_prefix: str, auth_headers: dict
@@ -269,6 +387,51 @@ class TestUploadRejections:
         self._assert_rejected(
             client, api_prefix, auth_headers, _blank_pdf(), "NO_TEXT_EXTRACTED"
         )
+
+    def test_pdf_with_too_much_text_rejected(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The extracted-text cap (2M characters in production)."""
+        monkeypatch.setattr(document_service, "MAX_EXTRACTED_CHARS", 100)
+        self._assert_rejected(
+            client, api_prefix, auth_headers, make_text_pdf(), "DOCUMENT_TOO_LARGE"
+        )
+
+    def test_pdf_with_too_many_pages_rejected(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(document_service, "MAX_PDF_PAGES", 1)
+        self._assert_rejected(
+            client, api_prefix, auth_headers, _two_page_pdf(), "DOCUMENT_TOO_LARGE"
+        )
+
+    def test_pdf_at_the_limits_accepted(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        pdf = _two_page_pdf()
+        monkeypatch.setattr(document_service, "MAX_PDF_PAGES", 2)
+        monkeypatch.setattr(
+            document_service,
+            "MAX_EXTRACTED_CHARS",
+            len("Page one about Marie Curie.Page two about Pierre Curie."),
+        )
+
+        response = _upload(client, api_prefix, auth_headers, "two.pdf", pdf)
+
+        assert response.status_code == 201
+        assert response.json()["document"]["page_count"] == 2
 
     def test_rejected_upload_does_not_schedule_graph_build(
         self,
@@ -389,6 +552,27 @@ class TestDocumentList:
         assert [d["title"] for d in page2["data"]] == ["one"]
         assert page3["data"] == []
 
+    def test_list_omits_graph_node_ids(
+        self, client: TestClient, api_prefix: str, auth_headers: dict, uploaded_document: dict
+    ):
+        """A large document has thousands of node IDs; only the single-document
+        endpoint carries them."""
+        doc_id = uploaded_document["doc_id"]
+        node_ids = [f"node_{i:032x}" for i in range(50)]
+
+        async def store_node_ids():
+            async with get_session_context() as session:
+                assert await DocumentRepository(session).set_graph_nodes(doc_id, node_ids)
+
+        client.portal.call(store_node_ids)
+
+        listing = _list(client, api_prefix, auth_headers)
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers)
+
+        assert [d["doc_id"] for d in listing["data"]] == [doc_id]
+        assert listing["data"][0]["graph_nodes"] == []
+        assert document.json()["graph_nodes"] == node_ids
+
     def test_status_filter(
         self, client: TestClient, api_prefix: str, auth_headers: dict, uploaded_document: dict
     ):
@@ -446,6 +630,171 @@ class TestParaphrase:
     ):
         response = client.get(f"{api_prefix}/documents/{mock_document_id}/paraphrase")
         assert response.status_code == 401
+
+
+class TestBackgroundGraphBuild:
+    """build_document_graph_task, with the graph build itself replaced."""
+
+    def test_processing_during_build_then_indexed(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """While the graph is built the document is PROCESSING, and no
+        database connection sits idle in a transaction (PostgreSQL closes
+        those after 60s, which used to lose every long build)."""
+        seen: dict = {}
+
+        async def build(doc_id: str, content: str) -> GraphBuildResult:
+            seen["status"] = await document_status(doc_id)
+            seen["idle_in_transaction"] = await idle_in_transaction_connections()
+            return fake_build_result("node_a", "node_b")
+
+        monkeypatch.setattr(document_graph, "build_document_graph", build)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        # The upload only schedules the build
+        assert response.json()["document"]["status"] == "validated"
+        assert seen == {"status": "processing", "idle_in_transaction": 0}
+        doc_id = response.json()["document"]["doc_id"]
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).json()
+        assert document["status"] == "indexed"
+        assert document["graph_nodes"] == ["node_a", "node_b"]
+
+    @pytest.mark.parametrize(
+        "error",
+        [ServiceUnavailable("Couldn't connect to graph:7687"), RuntimeError("spaCy crashed")],
+        ids=["graph-outage", "failure"],
+    )
+    def test_failed_build_returns_to_validated(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+        error: Exception,
+    ):
+        seen: list[str | None] = []
+
+        async def build(doc_id: str, content: str) -> GraphBuildResult:
+            seen.append(await document_status(doc_id))
+            raise error
+
+        monkeypatch.setattr(document_graph, "build_document_graph", build)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        assert seen == ["processing"]
+        doc_id = response.json()["document"]["doc_id"]
+        document = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).json()
+        assert document["status"] == "validated"
+        assert document["graph_nodes"] == []
+
+    def test_background_builds_run_at_most_two_at_a_time(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        graph_build_calls: list[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        for i in range(4):
+            response = _upload(
+                client, api_prefix, auth_headers, f"{i}.pdf", make_text_pdf(f"Paper {i} text")
+            )
+            assert response.status_code == 201
+        running = peak = 0
+
+        async def build(doc_id: str, content: str) -> GraphBuildResult:
+            nonlocal running, peak
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.2)
+            running -= 1
+            return fake_build_result(f"node_{doc_id[-12:]}")
+
+        monkeypatch.setattr(document_graph, "build_document_graph", build)
+
+        async def build_all():
+            await asyncio.gather(
+                *(document_graph.build_document_graph_task(d) for d in graph_build_calls)
+            )
+
+        client.portal.call(build_all)
+
+        assert peak == 2
+        assert document_graph.MAX_CONCURRENT_BACKGROUND_BUILDS == 2
+        statuses = [client.portal.call(document_status, d) for d in graph_build_calls]
+        assert statuses == ["indexed"] * 4
+
+    def test_document_deleted_during_build_gets_its_graph_removed(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        graph_deletes: list[str] = []
+
+        async def record_graph_delete(doc_id: str) -> int:
+            graph_deletes.append(doc_id)
+            return 0
+
+        async def delete_then_build(doc_id: str, content: str) -> GraphBuildResult:
+            # The user deletes the document while its graph is being built
+            async with get_session_context() as session:
+                await DocumentRepository(session).delete(doc_id)
+            return fake_build_result("node_a")
+
+        monkeypatch.setattr(document_graph, "delete_document_graph", record_graph_delete)
+        monkeypatch.setattr(document_graph, "build_document_graph", delete_then_build)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        doc_id = response.json()["document"]["doc_id"]
+        assert graph_deletes == [doc_id]
+        assert client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers).status_code == 404
+
+    @pytest.mark.requires_neo4j
+    def test_document_deleted_during_build_leaves_no_nodes(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """The real build keeps writing nodes after the delete removed the
+        graph; they must not be left behind with no API path to remove them."""
+        real_build = document_graph.build_document_graph
+        written: list[int] = []
+
+        async def delete_then_build(doc_id: str, content: str) -> GraphBuildResult:
+            # What DELETE /documents/{id} does, while the build is running
+            async with get_session_context() as session:
+                await DocumentRepository(session).delete(doc_id)
+            await document_graph.delete_document_graph(doc_id)
+            result = await real_build(doc_id, content)
+            written.append(await _count_graph_nodes(doc_id))
+            return result
+
+        monkeypatch.setattr(document_graph, "build_document_graph", delete_then_build)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        doc_id = response.json()["document"]["doc_id"]
+        assert written and written[0] > 0
+        assert client.portal.call(_count_graph_nodes, doc_id) == 0
 
 
 class TestDocumentDeletion:

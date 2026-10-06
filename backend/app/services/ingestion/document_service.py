@@ -1,11 +1,13 @@
 """Document processing service."""
 
+import asyncio
 import hashlib
 import io
 import logging
 import re
 from pathlib import Path
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -28,6 +30,11 @@ try:
 except ImportError:
     PYPDF_AVAILABLE = False
     logger.warning("pypdf not installed - PDF text extraction disabled")
+
+# Limits on what one upload may extract to: a small, highly compressed PDF
+# can inflate to millions of characters, all stored and fed to the graph build.
+MAX_PDF_PAGES = 2000
+MAX_EXTRACTED_CHARS = 2_000_000
 
 
 class DocumentProcessingError(Exception):
@@ -68,7 +75,7 @@ class DocumentService:
         filename: str,
         content_type: str,
         owner_id: str | None = None,
-    ) -> Document:
+    ) -> tuple[Document, bool]:
         """Upload and process a document.
 
         The file is parsed before anything is stored, so a rejected upload
@@ -82,11 +89,14 @@ class DocumentService:
             owner_id: Owner user ID
 
         Returns:
-            The processed document, or the owner's existing copy of it
+            (document, created): the processed document and True, or the
+            owner's existing copy of it and False (also when an identical
+            upload by the same owner was stored concurrently)
 
         Raises:
-            DocumentProcessingError: If the type is unsupported or no text can
-                be extracted (corrupt, password-protected or image-only PDF)
+            DocumentProcessingError: If the type is unsupported, the document
+                is too large, or no text can be extracted (corrupt,
+                password-protected or image-only PDF)
         """
         # Validate file type
         if content_type not in self.SUPPORTED_TYPES:
@@ -102,10 +112,14 @@ class DocumentService:
         existing = await self.repo.get_by_id(doc_id, owner_id=owner_id)
         if existing is not None:
             logger.info(f"Document already exists: {doc_id}")
-            return existing
+            return existing, False
 
-        # Extract text before persisting anything (raises DocumentProcessingError)
-        text_content, page_count, metadata = self._extract_pdf_content(file_content)
+        # Extract text before persisting anything (raises DocumentProcessingError).
+        # pypdf is CPU-bound and a small file can take seconds or more to
+        # extract, so keep it off the event loop.
+        text_content, page_count, metadata = await asyncio.to_thread(
+            self._extract_pdf_content, file_content
+        )
         if not text_content.split():
             raise DocumentProcessingError(
                 "No text content could be extracted from the document. "
@@ -119,15 +133,25 @@ class DocumentService:
         # Extract title from filename
         title = Path(filename).stem if filename else "Untitled"
 
-        # Create document record
-        document = await self.repo.create(
-            doc_id=doc_id,
-            title=title,
-            owner_id=owner_id,
-            source=DocumentSource.UPLOAD,
-            file_path=str(file_path),
-            file_size_bytes=len(file_content),
-        )
+        # Create document record. A concurrent identical upload by the same
+        # owner (a double click) may insert the row first: the savepoint
+        # keeps this transaction usable, and that document is returned.
+        try:
+            async with self.session.begin_nested():
+                document = await self.repo.create(
+                    doc_id=doc_id,
+                    title=title,
+                    owner_id=owner_id,
+                    source=DocumentSource.UPLOAD,
+                    file_path=str(file_path),
+                    file_size_bytes=len(file_content),
+                )
+        except IntegrityError:
+            existing = await self.repo.get_by_id(doc_id, owner_id=owner_id)
+            if existing is None:
+                raise
+            logger.info(f"Document stored by a concurrent upload: {doc_id}")
+            return existing, False
         await self._process_document_content(document, text_content, page_count, metadata)
 
         # Return the processed document, not the 'pending' snapshot from create()
@@ -145,7 +169,7 @@ class DocumentService:
                 code="STORAGE_ERROR",
             )
 
-        return processed
+        return processed, True
 
     async def _process_document_content(
         self,
@@ -211,7 +235,9 @@ class DocumentService:
             Tuple of (text_content, page_count, metadata)
 
         Raises:
-            DocumentProcessingError: If the PDF is encrypted or corrupt.
+            DocumentProcessingError: If the PDF is encrypted or corrupt, or
+                has more than MAX_PDF_PAGES pages or MAX_EXTRACTED_CHARS
+                characters of text (DOCUMENT_TOO_LARGE).
         """
         if not PYPDF_AVAILABLE:
             raise DocumentProcessingError(
@@ -256,17 +282,28 @@ class DocumentService:
                     else:
                         metadata["authors"] = [authors]
 
-            # Extract text from each page
+            page_count = len(reader.pages)
+            if page_count > MAX_PDF_PAGES:
+                raise self._too_large(f"more than {MAX_PDF_PAGES} pages")
+
+            # Extract text from each page, stopping once there is too much
             text_parts = []
+            total_chars = 0
             for page in reader.pages:
                 try:
                     text = page.extract_text()
-                    if text:
-                        text_parts.append(text)
                 except Exception as e:
                     logger.warning(f"Failed to extract text from page: {e}")
-
-            page_count = len(reader.pages)
+                    continue
+                if text:
+                    text_parts.append(text)
+                    total_chars += len(text)
+                    if total_chars > MAX_EXTRACTED_CHARS:
+                        raise self._too_large(
+                            f"more than {MAX_EXTRACTED_CHARS:,} characters of text"
+                        )
+        except DocumentProcessingError:
+            raise
         except Exception as e:
             raise DocumentProcessingError(
                 f"File appears to be corrupt or is not a valid PDF: {e}",
@@ -276,6 +313,13 @@ class DocumentService:
         text_content = "\n\n".join(text_parts).replace("\x00", "")
 
         return text_content, page_count, metadata
+
+    @staticmethod
+    def _too_large(what: str) -> DocumentProcessingError:
+        return DocumentProcessingError(
+            f"The document is too large to process ({what}).",
+            code="DOCUMENT_TOO_LARGE",
+        )
 
     @staticmethod
     def _decrypts_with_empty_password(reader) -> bool:
