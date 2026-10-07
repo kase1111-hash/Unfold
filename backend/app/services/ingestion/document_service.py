@@ -116,7 +116,10 @@ class DocumentService:
 
         # Extract text before persisting anything (raises DocumentProcessingError).
         # pypdf is CPU-bound and a small file can take seconds or more to
-        # extract, so keep it off the event loop.
+        # extract, so keep it off the event loop, and end the read-only
+        # transaction (auth lookup, dedupe check) first so no connection sits
+        # idle in a transaction meanwhile (PostgreSQL closes those after 60s).
+        await self.session.commit()
         text_content, page_count, metadata = await asyncio.to_thread(
             self._extract_pdf_content, file_content
         )

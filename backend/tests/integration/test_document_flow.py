@@ -277,6 +277,30 @@ class TestUploadSuccess:
         assert len(threads) == 1
         assert threads[0] != loop_thread
 
+    def test_no_transaction_held_during_pdf_extraction(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        text_pdf: bytes,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Extraction can take long; a transaction left open across it is
+        closed by PostgreSQL after 60s and the upload then fails with 500."""
+        in_transaction: list[bool] = []
+        extract = DocumentService._extract_pdf_content
+
+        def recording_extract(self, file_content):
+            in_transaction.append(self.session.in_transaction())
+            return extract(self, file_content)
+
+        monkeypatch.setattr(DocumentService, "_extract_pdf_content", recording_extract)
+
+        response = _upload(client, api_prefix, auth_headers, "curie.pdf", text_pdf)
+
+        assert response.status_code == 201
+        assert in_transaction == [False]
+
     def test_pdf_encrypted_with_empty_user_password_accepted(
         self, client: TestClient, api_prefix: str, auth_headers: dict
     ):
