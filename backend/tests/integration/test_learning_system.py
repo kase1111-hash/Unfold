@@ -92,6 +92,9 @@ def run_db(client: TestClient, fn, *args):
 
 
 async def _card_rows(session, document_id: str) -> list[FlashcardORM]:
+    # Fresh statistics make the planner pick a sequential scan, as autovacuum
+    # does mid-run; ordering must not depend on the physical row order.
+    await session.execute(text("ANALYZE flashcards"))
     result = await session.execute(
         select(FlashcardORM)
         .where(FlashcardORM.document_id == document_id)

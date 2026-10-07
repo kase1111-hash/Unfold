@@ -61,10 +61,12 @@ class FlashcardRepository:
                 total_reviews=0,
                 correct_reviews=0,
                 next_review=now,
-                created_at=now,
+                # Distinct, increasing timestamps keep generation order when
+                # cards are listed by created_at (ties have no defined order).
+                created_at=now + timedelta(microseconds=i),
                 updated_at=now,
             )
-            for card in cards
+            for i, card in enumerate(cards)
         ]
         self.session.add_all(cards_orm)
         await self.session.flush()

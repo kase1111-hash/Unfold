@@ -711,24 +711,38 @@ class TestBackgroundGraphBuild:
             )
             assert response.status_code == 201
         running = peak = 0
+        release = asyncio.Event()
 
         async def build(doc_id: str, content: str) -> GraphBuildResult:
             nonlocal running, peak
             running += 1
             peak = max(peak, running)
-            await asyncio.sleep(0.2)
+            await release.wait()
             running -= 1
             return fake_build_result(f"node_{doc_id[-12:]}")
 
         monkeypatch.setattr(document_graph, "build_document_graph", build)
 
-        async def build_all():
-            await asyncio.gather(
+        async def build_all() -> list[str | None]:
+            builds = asyncio.gather(
                 *(document_graph.build_document_graph_task(d) for d in graph_build_calls)
             )
+            # Two builds hold the slots and the other two wait for one.
+            # The waiting ones must already read "processing", so the reader
+            # keeps showing them as building instead of offering a Build button.
+            statuses: list[str | None] = []
+            for _ in range(250):
+                await asyncio.sleep(0.02)
+                statuses = [await document_status(d) for d in graph_build_calls]
+                if running == 2 and statuses == ["processing"] * 4:
+                    break
+            release.set()
+            await builds
+            return statuses
 
-        client.portal.call(build_all)
+        statuses_while_building = client.portal.call(build_all)
 
+        assert statuses_while_building == ["processing"] * 4
         assert peak == 2
         assert document_graph.MAX_CONCURRENT_BACKGROUND_BUILDS == 2
         statuses = [client.portal.call(document_status, d) for d in graph_build_calls]

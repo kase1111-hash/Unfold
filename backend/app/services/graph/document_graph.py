@@ -150,30 +150,32 @@ async def mark_build_failed(doc_id: str) -> None:
         logger.exception(f"Could not reset the status of {doc_id}")
 
 
+async def _mark_processing(doc_id: str) -> bool:
+    """Set PROCESSING if the document has text to build from."""
+    async with get_session_context() as session:
+        repo = DocumentRepository(session)
+        if not await repo.get_content(doc_id):
+            return False
+        await repo.update_status(doc_id, DocumentStatus.PROCESSING)
+        return True
+
+
 async def _build_and_save(doc_id: str) -> None:
     """Read the text, build the graph, save the result: one short session
     before the build and one after it, none during it."""
     async with get_session_context() as session:
-        repo = DocumentRepository(session)
-        content = await repo.get_content(doc_id)
-        if not content:
-            logger.warning(f"Graph build skipped for {doc_id}: no content")
-            return
-        await repo.update_status(doc_id, DocumentStatus.PROCESSING)
+        content = await DocumentRepository(session).get_content(doc_id)
+    if not content:
+        return  # deleted while queued
 
-    try:
-        result = await build_document_graph(doc_id, content)
-        if result.errors:
-            logger.warning(
-                f"Graph build for {doc_id} had {len(result.errors)} errors; "
-                f"first: {result.errors[0]}"
-            )
-        async with get_session_context() as session:
-            saved = await save_build_result(DocumentRepository(session), doc_id, result)
-    except BaseException:
-        # Also on cancellation (shutdown), so the document isn't left PROCESSING
-        await mark_build_failed(doc_id)
-        raise
+    result = await build_document_graph(doc_id, content)
+    if result.errors:
+        logger.warning(
+            f"Graph build for {doc_id} had {len(result.errors)} errors; "
+            f"first: {result.errors[0]}"
+        )
+    async with get_session_context() as session:
+        saved = await save_build_result(DocumentRepository(session), doc_id, result)
 
     if saved:
         logger.info(
@@ -191,8 +193,20 @@ async def build_document_graph_task(doc_id: str) -> None:
     reader. Skipped when a build of the same document is already running.
     """
     try:
-        async with exclusive_build(doc_id), _background_build_slots:
-            await _build_and_save(doc_id)
+        async with exclusive_build(doc_id):
+            # PROCESSING already while waiting for a build slot: otherwise the
+            # reader gives up on a "validated" document and offers a Build
+            # button that can only get 409 BUILD_IN_PROGRESS.
+            if not await _mark_processing(doc_id):
+                logger.warning(f"Graph build skipped for {doc_id}: no content")
+                return
+            try:
+                async with _background_build_slots:
+                    await _build_and_save(doc_id)
+            except BaseException:
+                # Also on cancellation (shutdown), so it isn't left PROCESSING
+                await mark_build_failed(doc_id)
+                raise
     except BuildInProgressError:
         logger.info(f"Graph build for {doc_id} skipped: a build is already running")
     except GRAPH_UNAVAILABLE_ERRORS as e:
