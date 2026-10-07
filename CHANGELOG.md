@@ -62,8 +62,19 @@ repetition (see REFOCUS_PLAN.md).
 - The default general rate limit is 300 requests/min per client IP (was 60,
   which an ordinary 50-card review session exceeded); auth endpoints stay at
   10/min.
-- `GET /api/v1/graph/nodes` accepts `limit` up to 1000 and returns nodes in a
-  deterministic order.
+- `GET /api/v1/graph/nodes` accepts `limit` up to 1000 and returns the most
+  connected nodes first (then by label), so a cut-off result keeps the hub
+  concepts and their edges; `total` counts every match, and the graph view
+  says "Showing the N most connected of M concepts" when it was cut off. The
+  `query` filter is applied before the limit (it used to miss matches).
+- A background build waiting for a free build slot already reports
+  `processing`, so the reader keeps showing it as building. Documents left
+  `processing` by a crashed process are reset to `validated` at startup.
+- Upload ends its read-only database transaction before extracting the PDF
+  (PostgreSQL closes transactions left idle for 60s, which made slow uploads
+  fail with 500).
+- The frontend no longer calls `/auth/refresh` on protected pages when nobody
+  has signed in on that browser (it only used up the auth rate limit).
 - `/learning/relevance/rank` accepts at most 500 passages (422 above that) and
   scores them in a worker thread instead of on the event loop.
 - `/health/detailed` reports unavailable services with generic messages; the
