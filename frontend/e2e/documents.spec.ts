@@ -1,111 +1,172 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, makeDocument, appAlerts, DOC1, RATE_LIMITED } from "./fixtures";
 
-test.describe("Documents Management", () => {
-  test.describe("Document List Page", () => {
-    test("should load documents page", async ({ page }) => {
-      await page.goto("/documents");
-      await page.waitForLoadState("networkidle");
+const hexId = (n: number) => `sha256:${n.toString(16).padStart(64, "0")}`;
 
-      // Page should load without errors
-      await expect(page.locator("body")).toBeVisible();
-    });
+test.describe("Documents list", () => {
+  test("lists the user's documents with status and pagination", async ({ page, api }) => {
+    api.data.documents.splice(
+      0,
+      api.data.documents.length,
+      ...Array.from({ length: 25 }, (_, i) =>
+        makeDocument({
+          doc_id: hexId(i + 1),
+          title: `Paper ${String(i + 1).padStart(2, "0")}`,
+          status: i === 0 ? "indexed" : "validated",
+        })
+      )
+    );
+    await page.goto("/documents");
 
-    test("should display document list or empty state", async ({ page }) => {
-      await page.goto("/documents");
-      await page.waitForLoadState("networkidle");
+    const rows = page.locator("tbody tr");
+    await expect(rows).toHaveCount(10);
+    await expect(rows.first()).toContainText("Paper 01");
+    await expect(rows.first()).toContainText("indexed");
+    await expect(page.getByText("Page 1 of 3")).toBeVisible();
+    // Trailing-slash path (no redirect) with snake_case paging params
+    const first = api.callsTo("GET", "/documents/")[0];
+    expect(first.query.get("page")).toBe("1");
+    expect(first.query.get("page_size")).toBe("10");
 
-      // Should show either documents or empty state message
-      const hasDocuments = await page.locator('[data-testid="document-item"], .document-card, article').count() > 0;
-      const hasEmptyState = await page.locator('text=/no documents|empty|upload|get started/i').count() > 0;
+    await page.getByRole("button", { name: "Next" }).click();
 
-      expect(hasDocuments || hasEmptyState).toBeTruthy();
-    });
-
-    test("should have search functionality", async ({ page }) => {
-      await page.goto("/documents");
-
-      // Look for search input
-      const searchInput = page.locator('input[type="search"], input[placeholder*="search" i], input[name="search"]');
-      if (await searchInput.count() > 0) {
-        await expect(searchInput).toBeVisible();
-      }
-    });
-
-    test("should have upload button or link", async ({ page }) => {
-      await page.goto("/documents");
-
-      // Look for upload functionality
-      const uploadElement = page.locator('a[href*="upload"], button:has-text("upload"), button:has-text("add")');
-      if (await uploadElement.count() > 0) {
-        await expect(uploadElement.first()).toBeVisible();
-      }
-    });
+    await expect(page.getByText("Page 2 of 3")).toBeVisible();
+    await expect(rows.first()).toContainText("Paper 11");
+    expect(api.callsTo("GET", "/documents/").at(-1)?.query.get("page")).toBe("2");
   });
 
-  test.describe("Document Upload Page", () => {
-    test("should load upload page", async ({ page }) => {
-      await page.goto("/upload");
-      await page.waitForLoadState("networkidle");
+  test("filters rows by the search box", async ({ page }) => {
+    await page.goto("/documents");
+    await expect(page.locator("tbody tr")).toHaveCount(2);
 
-      await expect(page.locator("body")).toBeVisible();
-    });
+    await page.getByPlaceholder("Search documents...").fill("photosynthesis");
 
-    test("should display file upload area", async ({ page }) => {
-      await page.goto("/upload");
+    await expect(page.locator("tbody tr")).toHaveCount(1);
+    await expect(page.locator("tbody tr")).toContainText("Photosynthesis Basics");
+  });
 
-      // Look for file input or drop zone
-      const fileInput = page.locator('input[type="file"]');
-      const dropZone = page.locator('[data-testid="drop-zone"], .dropzone, .upload-area');
+  test("deletes a document after confirmation", async ({ page, api }) => {
+    await page.goto("/documents");
+    await expect(page.locator("tbody tr")).toHaveCount(2);
 
-      const hasFileInput = await fileInput.count() > 0;
-      const hasDropZone = await dropZone.count() > 0;
+    page.once("dialog", (dialog) => dialog.accept());
+    await page
+      .locator("tbody tr", { hasText: "Marie Curie and Radioactivity" })
+      .getByTitle("Delete")
+      .click();
 
-      expect(hasFileInput || hasDropZone).toBeTruthy();
-    });
+    await expect(page.locator("tbody tr")).toHaveCount(1);
+    await expect(page.locator("tbody tr")).toContainText("Photosynthesis Basics");
+    expect(api.callsTo("DELETE", `/documents/${DOC1}`)).toHaveLength(1);
+  });
 
-    test("should show supported file types", async ({ page }) => {
-      await page.goto("/upload");
+  test("shows an empty state when there are no documents", async ({ page, api }) => {
+    api.data.documents.splice(0);
+    await page.goto("/documents");
 
-      // Look for file type information
-      const fileTypeInfo = page.locator('text=/pdf|epub|supported/i');
-      if (await fileTypeInfo.count() > 0) {
-        await expect(fileTypeInfo.first()).toBeVisible();
-      }
-    });
-
-    test("should validate file type on selection", async ({ page }) => {
-      await page.goto("/upload");
-
-      const fileInput = page.locator('input[type="file"]');
-      if (await fileInput.count() > 0) {
-        // Check that file input has accept attribute
-        const acceptAttr = await fileInput.getAttribute("accept");
-        if (acceptAttr) {
-          expect(acceptAttr.toLowerCase()).toMatch(/pdf|epub|application/);
-        }
-      }
-    });
+    await expect(page.getByText("No documents uploaded yet")).toBeVisible();
   });
 });
 
-test.describe("Reading Interface", () => {
-  test("should handle reading page with invalid document ID", async ({ page }) => {
-    await page.goto("/read/nonexistent-doc-123");
-    await page.waitForLoadState("networkidle");
+test.describe("Upload", () => {
+  const pdf = {
+    name: "curie.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4\n% test file\n"),
+  };
+  const otherPdf = { ...pdf, name: "darwin.pdf" };
+  const NEW_DOC = hexId(0xc0ffee);
 
-    // Should show error or redirect
-    const currentUrl = page.url();
-    const hasError = await page.locator('text=/not found|error|404/i').count() > 0;
+  test("accepts PDFs only", async ({ page }) => {
+    await page.goto("/upload");
 
-    expect(currentUrl.includes("/read") || hasError || currentUrl.includes("/documents")).toBeTruthy();
+    await expect(page.getByRole("heading", { name: "Upload Document" })).toBeVisible();
+    await expect(page.locator('input[type="file"]')).toHaveAttribute("accept", ".pdf,application/pdf");
+    await expect(page.getByText("Supported format: PDF (max 50MB)")).toBeVisible();
   });
 
-  test("should have complexity slider component available", async ({ page }) => {
-    await page.goto("/read/test-doc");
-    await page.waitForTimeout(1000);
+  test("uploads, explains the background graph build and opens the reader", async ({
+    page,
+    api,
+  }) => {
+    const uploaded = makeDocument({
+      doc_id: NEW_DOC,
+      title: "Curie Notes",
+      status: "validated",
+      word_count: 41,
+    });
+    api.on("POST", "/documents/upload", () => {
+      api.data.documents.push(uploaded);
+      api.data.content[NEW_DOC] = "Notes about Marie Curie.";
+      return {
+        status: 201,
+        body: { status: "success", message: "Document uploaded successfully", document: uploaded },
+      };
+    });
+    await page.goto("/upload");
 
-    // Look for slider or complexity control
-    const slider = page.locator('input[type="range"], [role="slider"], .complexity-slider');
-    // May not be visible if document doesn't exist, but component should be available
+    await page.locator('input[type="file"]').setInputFiles(pdf);
+    await page.getByRole("button", { name: "Upload Document" }).click();
+
+    await expect(page.getByText("The knowledge graph is being built in the background.")).toBeVisible();
+    await expect(page).toHaveURL(`/read/${encodeURIComponent(NEW_DOC)}`);
+    await expect(page.getByRole("heading", { name: "Curie Notes" })).toBeVisible();
+    expect(api.callsTo("POST", "/documents/upload")).toHaveLength(1);
+    expect(String(api.callsTo("POST", "/documents/upload")[0].body)).toContain('name="file"');
+  });
+
+  test("after a rejected PDF the user can choose another file", async ({ page, api }) => {
+    let uploads = 0;
+    api.on("POST", "/documents/upload", () => {
+      uploads += 1;
+      if (uploads === 1) {
+        return {
+          status: 400,
+          body: {
+            detail: {
+              code: "CORRUPT_PDF",
+              message:
+                "File appears to be corrupt or is not a valid PDF: Stream has ended unexpectedly",
+            },
+          },
+        };
+      }
+      const doc = makeDocument({ doc_id: NEW_DOC, title: "Darwin Notes", status: "validated" });
+      api.data.documents.push(doc);
+      return { status: 201, body: { status: "success", message: "Document uploaded successfully", document: doc } };
+    });
+    await page.goto("/upload");
+    await page.locator('input[type="file"]').setInputFiles(pdf);
+    await page.getByRole("button", { name: "Upload Document" }).click();
+
+    await expect(appAlerts(page).filter({ hasText: "File appears to be corrupt" })).toBeVisible();
+    await expect(page).toHaveURL(/\/upload$/);
+    // Sending the same rejected file again cannot help
+    await expect(page.getByRole("button", { name: "Retry Upload" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Remove file" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Choose another file" }).click();
+    await page.locator('input[type="file"]').setInputFiles(otherPdf);
+    await expect(page.getByText("darwin.pdf")).toBeVisible();
+    await page.getByRole("button", { name: "Upload Document" }).click();
+
+    await expect(page).toHaveURL(`/read/${encodeURIComponent(NEW_DOC)}`);
+    expect(api.callsTo("POST", "/documents/upload").map((c) => String(c.body).includes('filename="darwin.pdf"'))).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  test("an upload that failed for a passing reason can be retried", async ({ page, api }) => {
+    api.on("POST", "/documents/upload", RATE_LIMITED);
+    await page.goto("/upload");
+    await page.locator('input[type="file"]').setInputFiles(pdf);
+    await page.getByRole("button", { name: "Upload Document" }).click();
+
+    await expect(appAlerts(page).filter({ hasText: "Too many requests" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Retry Upload" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choose another file" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Retry Upload" }).click();
+    await expect.poll(() => api.callsTo("POST", "/documents/upload").length).toBe(2);
   });
 });

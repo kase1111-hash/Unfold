@@ -62,3 +62,8 @@ docker-compose*
 *.tmp
 .DS_Store
 Thumbs.db
+
+# Runtime artifacts (never bake uploaded documents into the image)
+uploads/
+htmlcov/
+coverage.xml

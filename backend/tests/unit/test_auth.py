@@ -1,5 +1,6 @@
 """Tests for authentication endpoints and services."""
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -170,27 +171,73 @@ class TestAuthEndpoints:
 
     @pytest.mark.integration
     def test_register_success(self, client, api_prefix):
-        """Test successful user registration.
-
-        This test requires a database connection to fully pass.
-        Run with: pytest -m integration
-        """
+        """Registering returns the user, an access token and a refresh cookie."""
+        suffix = uuid.uuid4().hex[:8]
+        email = f"reg_{suffix}@example.com"
         response = client.post(
             f"{api_prefix}/auth/register",
             json={
-                "email": "test@example.com",
-                "username": "testuser",
+                "email": email,
+                "username": f"reg_{suffix}",
                 "password": "securepass123",
                 "full_name": "Test User",
             },
         )
 
-        # Should return 201 on success
-        # 500 indicates a configuration/infrastructure issue that should be investigated
-        assert response.status_code == 201, (
-            f"Registration failed with status {response.status_code}. "
-            f"Response: {response.json() if response.status_code != 500 else 'Server Error'}"
+        assert response.status_code == 201, response.text
+        data = response.json()
+        assert data["user"]["email"] == email
+        assert data["access_token"]
+        assert "refresh_token" in response.cookies
+
+    @pytest.mark.integration
+    def test_login_me_and_refresh_round_trip(self, client, api_prefix):
+        """Login, /me with the access token, then refresh via the cookie."""
+        suffix = uuid.uuid4().hex[:8]
+        email = f"login_{suffix}@example.com"
+        register = client.post(
+            f"{api_prefix}/auth/register",
+            json={
+                "email": email,
+                "username": f"login_{suffix}",
+                "password": "securepass123",
+            },
         )
+        assert register.status_code == 201, register.text
+        client.cookies.clear()
+
+        login = client.post(
+            f"{api_prefix}/auth/login",
+            json={"email": email, "password": "securepass123"},
+        )
+        assert login.status_code == 200, login.text
+        token = login.json()["access_token"]
+
+        me = client.get(
+            f"{api_prefix}/auth/me", headers={"Authorization": f"Bearer {token}"}
+        )
+        assert me.status_code == 200
+        assert me.json()["email"] == email
+
+        refresh = client.post(f"{api_prefix}/auth/refresh", json={})
+        assert refresh.status_code == 200, refresh.text
+        assert refresh.json()["access_token"]
+
+    def test_login_wrong_password(self, client, api_prefix):
+        """Wrong credentials are rejected with 401."""
+        suffix = uuid.uuid4().hex[:8]
+        email = f"wrong_{suffix}@example.com"
+        client.post(
+            f"{api_prefix}/auth/register",
+            json={"email": email, "username": f"wrong_{suffix}", "password": "securepass123"},
+        )
+        client.cookies.clear()
+
+        response = client.post(
+            f"{api_prefix}/auth/login",
+            json={"email": email, "password": "not-the-password"},
+        )
+        assert response.status_code == 401
 
     def test_register_invalid_email(self, client, api_prefix):
         """Test registration with invalid email."""
@@ -228,13 +275,18 @@ class TestAuthEndpoints:
         assert response.status_code == 422  # Validation error
 
     def test_refresh_missing_token(self, client, api_prefix):
-        """Test token refresh with missing token."""
+        """Refresh without a cookie or body token is rejected with 401.
+
+        The body is optional by design: the refresh token normally arrives
+        as an httpOnly cookie, so an empty body is valid input.
+        """
         response = client.post(
             f"{api_prefix}/auth/refresh",
             json={},
         )
 
-        assert response.status_code == 422  # Validation error
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == "MISSING_REFRESH_TOKEN"
 
     def test_me_unauthorized(self, client, api_prefix):
         """Test /me endpoint without authentication."""

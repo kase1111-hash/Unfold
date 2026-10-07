@@ -1,19 +1,18 @@
 """Document processing service."""
 
+import asyncio
 import hashlib
 import io
 import logging
-import os
 import re
 from pathlib import Path
-from typing import BinaryIO
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.document import (
     Document,
-    DocumentLicense,
     DocumentSource,
     DocumentStatus,
     DocumentUpdate,
@@ -32,6 +31,11 @@ except ImportError:
     PYPDF_AVAILABLE = False
     logger.warning("pypdf not installed - PDF text extraction disabled")
 
+# Limits on what one upload may extract to: a small, highly compressed PDF
+# can inflate to millions of characters, all stored and fed to the graph build.
+MAX_PDF_PAGES = 2000
+MAX_EXTRACTED_CHARS = 2_000_000
+
 
 class DocumentProcessingError(Exception):
     """Error during document processing."""
@@ -48,7 +52,6 @@ class DocumentService:
     # Supported MIME types
     SUPPORTED_TYPES = {
         "application/pdf": ".pdf",
-        "application/epub+zip": ".epub",
     }
 
     # Upload directory (relative to project root)
@@ -72,8 +75,12 @@ class DocumentService:
         filename: str,
         content_type: str,
         owner_id: str | None = None,
-    ) -> Document:
+    ) -> tuple[Document, bool]:
         """Upload and process a document.
+
+        The file is parsed before anything is stored, so a rejected upload
+        leaves no document row and no file behind (and uploading the same
+        bytes again is rejected again, not deduplicated to a failed record).
 
         Args:
             file_content: Document file bytes
@@ -82,88 +89,108 @@ class DocumentService:
             owner_id: Owner user ID
 
         Returns:
-            Created document
+            (document, created): the processed document and True, or the
+            owner's existing copy of it and False (also when an identical
+            upload by the same owner was stored concurrently)
 
         Raises:
-            DocumentProcessingError: If processing fails
+            DocumentProcessingError: If the type is unsupported, the document
+                is too large, or no text can be extracted (corrupt,
+                password-protected or image-only PDF)
         """
         # Validate file type
         if content_type not in self.SUPPORTED_TYPES:
             raise DocumentProcessingError(
-                f"Unsupported file type: {content_type}. Supported: PDF, EPUB",
+                f"Unsupported file type: {content_type}. Supported: PDF",
                 code="UNSUPPORTED_TYPE",
             )
 
-        # Generate document ID from content hash
-        doc_id = self.repo.generate_doc_id(file_content)
+        # Generate document ID from owner + content hash
+        doc_id = self.repo.generate_doc_id(file_content, owner_id)
 
-        # Check if document already exists
-        existing = await self.repo.get_by_id(doc_id)
+        # Check if this owner already uploaded the document
+        existing = await self.repo.get_by_id(doc_id, owner_id=owner_id)
         if existing is not None:
             logger.info(f"Document already exists: {doc_id}")
-            return existing
+            return existing, False
 
-        # Save file to disk
+        # Extract text before persisting anything (raises DocumentProcessingError).
+        # pypdf is CPU-bound and a small file can take seconds or more to
+        # extract, so keep it off the event loop, and end the read-only
+        # transaction (auth lookup, dedupe check) first so no connection sits
+        # idle in a transaction meanwhile (PostgreSQL closes those after 60s).
+        await self.session.commit()
+        text_content, page_count, metadata = await asyncio.to_thread(
+            self._extract_pdf_content, file_content
+        )
+        if not text_content.split():
+            raise DocumentProcessingError(
+                "No text content could be extracted from the document. "
+                "Scanned or image-only PDFs are not supported.",
+                code="NO_TEXT_EXTRACTED",
+            )
+
         extension = self.SUPPORTED_TYPES[content_type]
         file_path = self.UPLOAD_DIR / f"{doc_id.replace(':', '_')}{extension}"
 
+        # Extract title from filename
+        title = Path(filename).stem if filename else "Untitled"
+
+        # Create document record. A concurrent identical upload by the same
+        # owner (a double click) may insert the row first: the savepoint
+        # keeps this transaction usable, and that document is returned.
+        try:
+            async with self.session.begin_nested():
+                document = await self.repo.create(
+                    doc_id=doc_id,
+                    title=title,
+                    owner_id=owner_id,
+                    source=DocumentSource.UPLOAD,
+                    file_path=str(file_path),
+                    file_size_bytes=len(file_content),
+                )
+        except IntegrityError:
+            existing = await self.repo.get_by_id(doc_id, owner_id=owner_id)
+            if existing is None:
+                raise
+            logger.info(f"Document stored by a concurrent upload: {doc_id}")
+            return existing, False
+        await self._process_document_content(document, text_content, page_count, metadata)
+
+        # Return the processed document, not the 'pending' snapshot from create()
+        processed = await self.repo.get_by_id(doc_id) or document
+
+        # Save the file last: if any step above fails, the request's
+        # transaction is rolled back and no orphan file is left on disk
         try:
             with open(file_path, "wb") as f:
                 f.write(file_content)
         except OSError as e:
+            file_path.unlink(missing_ok=True)
             raise DocumentProcessingError(
                 f"Failed to save file: {e}",
                 code="STORAGE_ERROR",
             )
 
-        # Extract title from filename
-        title = Path(filename).stem if filename else "Untitled"
-
-        # Create document record
-        document = await self.repo.create(
-            doc_id=doc_id,
-            title=title,
-            owner_id=owner_id,
-            source=DocumentSource.UPLOAD,
-            file_path=str(file_path),
-            file_size_bytes=len(file_content),
-        )
-
-        # Process document content asynchronously
-        try:
-            await self._process_document_content(document, file_content, content_type)
-        except Exception as e:
-            logger.error(f"Failed to process document content: {e}")
-            await self.repo.update_status(doc_id, DocumentStatus.FAILED)
-
-        return document
+        return processed, True
 
     async def _process_document_content(
         self,
         document: Document,
-        file_content: bytes,
-        content_type: str,
+        text_content: str,
+        page_count: int | None,
+        metadata: dict,
     ) -> None:
-        """Process document to extract text and metadata.
+        """Store extracted text and metadata and mark the document VALIDATED.
 
         Args:
             document: Document record
-            file_content: File bytes
-            content_type: MIME type
+            text_content: Extracted text (non-empty)
+            page_count: Number of pages
+            metadata: Title/authors extracted from the file
         """
-        await self.repo.update_status(document.doc_id, DocumentStatus.PROCESSING)
-
-        text_content = ""
-        page_count = None
-        metadata: dict = {}
-
-        if content_type == "application/pdf":
-            text_content, page_count, metadata = self._extract_pdf_content(file_content)
-        elif content_type == "application/epub+zip":
-            text_content, metadata = self._extract_epub_content(file_content)
-
         # Count words
-        word_count = len(text_content.split()) if text_content else 0
+        word_count = len(text_content.split())
 
         # Update document with extracted content
         await self.repo.update_content(
@@ -187,21 +214,12 @@ class DocumentService:
                 DocumentUpdate(authors=metadata["authors"]),
             )
 
-        # Only mark as VALIDATED if meaningful content was extracted
-        if word_count > 0:
-            await self.repo.update_status(document.doc_id, DocumentStatus.VALIDATED)
-            await self.repo.create_validation(
-                doc_id=document.doc_id,
-                is_valid=True,
-                provenance_hash=hashlib.sha256(text_content.encode()).hexdigest(),
-            )
-        else:
-            await self.repo.update_status(document.doc_id, DocumentStatus.FAILED)
-            await self.repo.create_validation(
-                doc_id=document.doc_id,
-                is_valid=False,
-                validation_errors=["No text content could be extracted from the document"],
-            )
+        await self.repo.update_status(document.doc_id, DocumentStatus.VALIDATED)
+        await self.repo.create_validation(
+            doc_id=document.doc_id,
+            is_valid=True,
+            provenance_hash=hashlib.sha256(text_content.encode()).hexdigest(),
+        )
 
         logger.info(
             f"Processed document {document.doc_id}: "
@@ -220,7 +238,9 @@ class DocumentService:
             Tuple of (text_content, page_count, metadata)
 
         Raises:
-            DocumentProcessingError: If the PDF is encrypted or corrupt.
+            DocumentProcessingError: If the PDF is encrypted or corrupt, or
+                has more than MAX_PDF_PAGES pages or MAX_EXTRACTED_CHARS
+                characters of text (DOCUMENT_TOO_LARGE).
         """
         if not PYPDF_AVAILABLE:
             raise DocumentProcessingError(
@@ -237,64 +257,94 @@ class DocumentService:
                 code="CORRUPT_PDF",
             )
 
-        # Reject encrypted / password-protected PDFs
-        if reader.is_encrypted:
+        # Reject password-protected PDFs. Many publisher PDFs are encrypted
+        # with an empty user password (permission flags only); those open
+        # without a password, so only reject when "" does not decrypt.
+        if reader.is_encrypted and not self._decrypts_with_empty_password(reader):
             raise DocumentProcessingError(
                 "Password-protected PDFs are not supported. "
                 "Please upload an unprotected PDF.",
                 code="ENCRYPTED_PDF",
             )
 
-        # Extract metadata
-        metadata: dict = {}
-        if reader.metadata:
-            if reader.metadata.title:
-                metadata["title"] = reader.metadata.title
-            if reader.metadata.author:
-                authors = reader.metadata.author
-                if "," in authors:
-                    metadata["authors"] = [a.strip() for a in authors.split(",")]
-                elif ";" in authors:
-                    metadata["authors"] = [a.strip() for a in authors.split(";")]
-                else:
-                    metadata["authors"] = [authors]
+        # pypdf parses lazily, so a broken page tree or metadata object only
+        # fails here; report it as a corrupt file rather than a server error.
+        # NULs are stripped throughout: PostgreSQL text columns reject them.
+        try:
+            # Extract metadata
+            metadata: dict = {}
+            if reader.metadata:
+                if reader.metadata.title:
+                    metadata["title"] = reader.metadata.title.replace("\x00", "")[:500]
+                if reader.metadata.author:
+                    authors = reader.metadata.author.replace("\x00", "")
+                    if "," in authors:
+                        metadata["authors"] = [a.strip() for a in authors.split(",")]
+                    elif ";" in authors:
+                        metadata["authors"] = [a.strip() for a in authors.split(";")]
+                    else:
+                        metadata["authors"] = [authors]
 
-        # Extract text from each page
-        text_parts = []
-        for page in reader.pages:
-            try:
-                text = page.extract_text()
+            page_count = len(reader.pages)
+            if page_count > MAX_PDF_PAGES:
+                raise self._too_large(f"more than {MAX_PDF_PAGES} pages")
+
+            # Extract text from each page, stopping once there is too much
+            text_parts = []
+            total_chars = 0
+            for page in reader.pages:
+                try:
+                    text = page.extract_text()
+                except Exception as e:
+                    logger.warning(f"Failed to extract text from page: {e}")
+                    continue
                 if text:
                     text_parts.append(text)
-            except Exception as e:
-                logger.warning(f"Failed to extract text from page: {e}")
+                    total_chars += len(text)
+                    if total_chars > MAX_EXTRACTED_CHARS:
+                        raise self._too_large(
+                            f"more than {MAX_EXTRACTED_CHARS:,} characters of text"
+                        )
+        except DocumentProcessingError:
+            raise
+        except Exception as e:
+            raise DocumentProcessingError(
+                f"File appears to be corrupt or is not a valid PDF: {e}",
+                code="CORRUPT_PDF",
+            )
 
-        text_content = "\n\n".join(text_parts)
-        page_count = len(reader.pages)
+        text_content = "\n\n".join(text_parts).replace("\x00", "")
 
         return text_content, page_count, metadata
 
-    def _extract_epub_content(self, file_content: bytes) -> tuple[str, dict]:
-        """Extract text content from EPUB.
+    @staticmethod
+    def _too_large(what: str) -> DocumentProcessingError:
+        return DocumentProcessingError(
+            f"The document is too large to process ({what}).",
+            code="DOCUMENT_TOO_LARGE",
+        )
 
-        Args:
-            file_content: EPUB file bytes
+    @staticmethod
+    def _decrypts_with_empty_password(reader) -> bool:
+        """Return True if an encrypted PDF opens with an empty user password."""
+        try:
+            return bool(reader.decrypt(""))
+        except Exception:
+            return False
 
-        Returns:
-            Tuple of (text_content, metadata)
-        """
-        raise ValueError("EPUB format is not supported. Please upload a PDF file.")
-
-    async def get_document(self, doc_id: str) -> Document | None:
+    async def get_document(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> Document | None:
         """Get document by ID.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return the document when this user owns it
 
         Returns:
             Document if found, None otherwise
         """
-        return await self.repo.get_by_id(doc_id)
+        return await self.repo.get_by_id(doc_id, owner_id=owner_id)
 
     async def list_documents(
         self,
@@ -321,17 +371,18 @@ class DocumentService:
             page_size=min(page_size, 100),
         )
 
-    async def delete_document(self, doc_id: str) -> bool:
+    async def delete_document(self, doc_id: str, owner_id: str | None = None) -> bool:
         """Delete a document and its file.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only delete the document when this user owns it
 
         Returns:
             True if deleted, False if not found
         """
         # Get document to find file path
-        document = await self.repo.get_by_id(doc_id)
+        document = await self.repo.get_by_id(doc_id, owner_id=owner_id)
         if document is None:
             return False
 
@@ -348,27 +399,32 @@ class DocumentService:
         # Delete database record
         return await self.repo.delete(doc_id)
 
-    async def get_document_content(self, doc_id: str) -> str | None:
+    async def get_document_content(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> str | None:
         """Get extracted text content of a document.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return content when this user owns it
 
         Returns:
             Text content if found, None otherwise
         """
-        return await self.repo.get_content(doc_id)
+        return await self.repo.get_content(doc_id, owner_id=owner_id)
 
     async def paraphrase_content(
         self,
         doc_id: str,
         complexity: int = 50,
+        owner_id: str | None = None,
     ) -> str | None:
         """Get paraphrased version of document content.
 
         Args:
             doc_id: Document identifier
             complexity: Complexity level (0=simplest, 100=original)
+            owner_id: If given, only paraphrase when this user owns the document
 
         Returns:
             Paraphrased content, or None if document not found
@@ -376,7 +432,7 @@ class DocumentService:
         Note:
             This is a placeholder. Full implementation would use LLM.
         """
-        content = await self.repo.get_content(doc_id)
+        content = await self.repo.get_content(doc_id, owner_id=owner_id)
         if content is None:
             return None
 

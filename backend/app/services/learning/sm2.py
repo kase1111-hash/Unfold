@@ -3,6 +3,8 @@ SM2 Spaced Repetition Algorithm Implementation.
 Based on the SuperMemo 2 algorithm by Piotr Wozniak.
 """
 
+import math
+from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass, field
@@ -51,9 +53,133 @@ class CardReviewState:
 
     @property
     def days_until_due(self) -> int:
-        """Days until card is due (negative if overdue)."""
+        """Days until card is due (negative if overdue).
+
+        Rounded up, so a card due in 23 hours reports 1, not 0.
+        """
         delta = self.next_review - datetime.now(timezone.utc)
-        return delta.days
+        return math.ceil(delta.total_seconds() / 86400)
+
+
+# Minimum easiness factor (prevents intervals from becoming too short)
+MIN_EF = 1.3
+
+# Initial intervals for new cards (in days)
+INITIAL_INTERVALS = [1, 6]  # First review after 1 day, second after 6 days
+
+# Longest interval (about 100 years). Without a cap, repeated reviews of a
+# card that is not yet due compound the interval until now + interval no
+# longer fits in a datetime (OverflowError after ~13 perfect reviews).
+MAX_INTERVAL_DAYS = 36500
+
+
+def apply_review(
+    state: CardReviewState,
+    quality: ResponseQuality,
+) -> CardReviewState:
+    """
+    Apply one review to a card's state and schedule its next review.
+
+    This implements the core SM2 algorithm:
+    1. Update easiness factor based on response quality
+    2. Calculate new interval
+    3. Schedule next review
+
+    The state is updated in place and returned. It holds no storage of
+    its own, so callers can load the state from anywhere (e.g. the
+    flashcards table) and write the result back.
+
+    Args:
+        state: Current state of the card being reviewed
+        quality: Quality of the response (0-5)
+
+    Returns:
+        Updated CardReviewState
+    """
+    state.total_reviews += 1
+    state.last_review = datetime.now(timezone.utc)
+
+    # Quality < 3 means incorrect response - reset repetitions
+    if quality < ResponseQuality.DIFFICULT_CORRECT:
+        state.repetitions = 0
+        state.interval = 1  # Review again tomorrow
+    else:
+        state.correct_reviews += 1
+
+        # Update easiness factor using SM2 formula
+        # EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
+        q = int(quality)
+        ef_delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)
+        state.easiness_factor = max(MIN_EF, state.easiness_factor + ef_delta)
+
+        # Calculate new interval
+        if state.repetitions == 0:
+            state.interval = INITIAL_INTERVALS[0]
+        elif state.repetitions == 1:
+            state.interval = INITIAL_INTERVALS[1]
+        else:
+            # I(n) = I(n-1) * EF
+            state.interval = round(state.interval * state.easiness_factor)
+
+        state.interval = min(state.interval, MAX_INTERVAL_DAYS)
+        state.repetitions += 1
+
+    # Schedule next review
+    state.next_review = datetime.now(timezone.utc) + timedelta(days=state.interval)
+
+    return state
+
+
+def compute_study_stats(cards: Iterable[CardReviewState]) -> dict:
+    """
+    Get overall study statistics for a set of cards.
+
+    Args:
+        cards: Review states of the cards to summarize
+
+    Returns:
+        Dictionary with study metrics
+    """
+    cards = list(cards)
+    if not cards:
+        return {
+            "total_cards": 0,
+            "due_now": 0,
+            "due_today": 0,
+            "average_ef": 0,
+            "average_retention": 0,
+            "mature_cards": 0,
+            "learning_cards": 0,
+        }
+
+    now = datetime.now(timezone.utc)
+    today_end = now.replace(hour=23, minute=59, second=59)
+
+    due_now = sum(1 for c in cards if c.next_review <= now)
+    due_today = sum(1 for c in cards if c.next_review <= today_end)
+
+    # Cards with interval > 21 days are considered "mature"
+    mature = sum(1 for c in cards if c.interval > 21)
+    learning = len(cards) - mature
+
+    avg_ef = sum(c.easiness_factor for c in cards) / len(cards)
+
+    cards_with_reviews = [c for c in cards if c.total_reviews > 0]
+    avg_retention = (
+        sum(c.retention_rate for c in cards_with_reviews) / len(cards_with_reviews)
+        if cards_with_reviews
+        else 0
+    )
+
+    return {
+        "total_cards": len(cards),
+        "due_now": due_now,
+        "due_today": due_today,
+        "average_ef": round(avg_ef, 2),
+        "average_retention": round(avg_retention * 100, 1),
+        "mature_cards": mature,
+        "learning_cards": learning,
+    }
 
 
 class SM2Scheduler:
@@ -62,13 +188,11 @@ class SM2Scheduler:
 
     The algorithm adjusts review intervals based on how well
     the user recalls each flashcard, optimizing for long-term retention.
+
+    This keeps card state in memory only. The API stores each user's cards
+    in the flashcards table (see FlashcardRepository) and uses apply_review
+    and compute_study_stats directly.
     """
-
-    # Minimum easiness factor (prevents intervals from becoming too short)
-    MIN_EF = 1.3
-
-    # Initial intervals for new cards (in days)
-    INITIAL_INTERVALS = [1, 6]  # First review after 1 day, second after 6 days
 
     def __init__(self):
         self._cards: dict[str, CardReviewState] = {}
@@ -99,10 +223,7 @@ class SM2Scheduler:
         """
         Process a review for a card and update its schedule.
 
-        This implements the core SM2 algorithm:
-        1. Update easiness factor based on response quality
-        2. Calculate new interval
-        3. Schedule next review
+        Unknown cards are added first. See apply_review for the algorithm.
 
         Args:
             card_id: The card being reviewed
@@ -115,37 +236,7 @@ class SM2Scheduler:
         if state is None:
             state = self.add_card(card_id)
 
-        state.total_reviews += 1
-        state.last_review = datetime.now(timezone.utc)
-
-        # Quality < 3 means incorrect response - reset repetitions
-        if quality < ResponseQuality.DIFFICULT_CORRECT:
-            state.repetitions = 0
-            state.interval = 1  # Review again tomorrow
-        else:
-            state.correct_reviews += 1
-
-            # Update easiness factor using SM2 formula
-            # EF' = EF + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-            q = int(quality)
-            ef_delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)
-            state.easiness_factor = max(self.MIN_EF, state.easiness_factor + ef_delta)
-
-            # Calculate new interval
-            if state.repetitions == 0:
-                state.interval = self.INITIAL_INTERVALS[0]
-            elif state.repetitions == 1:
-                state.interval = self.INITIAL_INTERVALS[1]
-            else:
-                # I(n) = I(n-1) * EF
-                state.interval = round(state.interval * state.easiness_factor)
-
-            state.repetitions += 1
-
-        # Schedule next review
-        state.next_review = datetime.now(timezone.utc) + timedelta(days=state.interval)
-
-        return state
+        return apply_review(state, quality)
 
     def get_due_cards(
         self,
@@ -201,45 +292,7 @@ class SM2Scheduler:
         Returns:
             Dictionary with study metrics
         """
-        if not self._cards:
-            return {
-                "total_cards": 0,
-                "due_now": 0,
-                "due_today": 0,
-                "average_ef": 0,
-                "average_retention": 0,
-                "mature_cards": 0,
-                "learning_cards": 0,
-            }
-
-        now = datetime.now(timezone.utc)
-        today_end = now.replace(hour=23, minute=59, second=59)
-
-        due_now = sum(1 for c in self._cards.values() if c.next_review <= now)
-        due_today = sum(1 for c in self._cards.values() if c.next_review <= today_end)
-
-        # Cards with interval > 21 days are considered "mature"
-        mature = sum(1 for c in self._cards.values() if c.interval > 21)
-        learning = len(self._cards) - mature
-
-        avg_ef = sum(c.easiness_factor for c in self._cards.values()) / len(self._cards)
-
-        cards_with_reviews = [c for c in self._cards.values() if c.total_reviews > 0]
-        avg_retention = (
-            sum(c.retention_rate for c in cards_with_reviews) / len(cards_with_reviews)
-            if cards_with_reviews
-            else 0
-        )
-
-        return {
-            "total_cards": len(self._cards),
-            "due_now": due_now,
-            "due_today": due_today,
-            "average_ef": round(avg_ef, 2),
-            "average_retention": round(avg_retention * 100, 1),
-            "mature_cards": mature,
-            "learning_cards": learning,
-        }
+        return compute_study_stats(self._cards.values())
 
     def get_optimal_review_count(
         self,
@@ -288,8 +341,6 @@ class SM2Scheduler:
         if stability <= 0:
             return 0.0
 
-        import math
-
         retention = math.exp(-days_from_now / stability)
         return round(retention, 3)
 
@@ -329,14 +380,3 @@ class SM2Scheduler:
             )
             self._cards[card_id] = state
 
-
-# Singleton instance
-_sm2_scheduler: Optional[SM2Scheduler] = None
-
-
-def get_sm2_scheduler() -> SM2Scheduler:
-    """Get or create singleton SM2Scheduler instance."""
-    global _sm2_scheduler
-    if _sm2_scheduler is None:
-        _sm2_scheduler = SM2Scheduler()
-    return _sm2_scheduler

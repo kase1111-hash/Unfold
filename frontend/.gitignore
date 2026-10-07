@@ -1,0 +1,8 @@
+# TypeScript incremental build state (rewritten by every tsc run)
+*.tsbuildinfo
+
+# Playwright output
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/

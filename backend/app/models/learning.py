@@ -34,17 +34,16 @@ class FlashcardBase(BaseModel):
         ..., min_length=1, max_length=1000, description="Question text"
     )
     answer: str = Field(..., min_length=1, max_length=2000, description="Answer text")
-    source_node_id: str = Field(..., description="Source knowledge graph node")
+    hint: str | None = Field(None, max_length=1000, description="Optional hint")
     difficulty: FlashcardDifficulty = Field(
         FlashcardDifficulty.MEDIUM, description="Difficulty level"
     )
 
 
 class FlashcardCreate(FlashcardBase):
-    """Model for creating a flashcard."""
+    """Model for creating a flashcard by hand (the owner comes from the token)."""
 
-    user_id: str = Field(..., description="User ID")
-    document_id: str = Field(..., description="Source document ID")
+    document_id: str = Field(..., min_length=1, description="Source document ID")
 
 
 class Flashcard(FlashcardBase, TimestampMixin):
@@ -53,11 +52,17 @@ class Flashcard(FlashcardBase, TimestampMixin):
     card_id: str = Field(..., description="Unique flashcard ID")
     user_id: str = Field(..., description="User ID")
     document_id: str = Field(..., description="Source document ID")
+    card_type: str = Field("recall", description="Question type, e.g. recall")
+    source_node_id: str | None = Field(
+        None, description="Source knowledge graph node, if any"
+    )
 
     # SM2 algorithm fields
     easiness: float = Field(2.5, ge=1.3, description="Easiness factor")
-    interval: int = Field(1, ge=1, description="Current interval in days")
+    interval: int = Field(0, ge=0, description="Current interval in days")
     repetitions: int = Field(0, ge=0, description="Number of successful reviews")
+    total_reviews: int = Field(0, ge=0, description="Number of reviews")
+    correct_reviews: int = Field(0, ge=0, description="Reviews rated 3 or higher")
     next_review: datetime = Field(..., description="Next scheduled review date")
     last_reviewed: datetime | None = Field(None, description="Last review timestamp")
 

@@ -4,12 +4,15 @@ import logging
 import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.v1 import router as api_v1_router
 from app.config import get_settings
 from app.db import (
+    GRAPH_UNAVAILABLE_ERRORS,
+    check_neo4j_connection,
     close_all_databases,
     init_postgres,
     init_neo4j,
@@ -18,6 +21,7 @@ from app.db import (
     create_tables,
 )
 from app.middleware import RateLimitMiddleware
+from app.services.graph.document_graph import reset_interrupted_builds
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +30,14 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+# The multipart parser runs before authentication and logs a WARNING for
+# malformed input; python-multipart 0.0.9 logged one per byte after the
+# closing boundary, so one unauthenticated request could write gigabytes of
+# logs. Keep only its errors. 0.0.20 logs as "python_multipart"; "multipart"
+# is the old import name.
+for _multipart_logger in ("multipart", "python_multipart"):
+    logging.getLogger(_multipart_logger).setLevel(logging.ERROR)
 
 settings = get_settings()
 
@@ -44,17 +56,25 @@ async def lifespan(app: FastAPI):
     # Initialize PostgreSQL
     try:
         await init_postgres()
-        if settings.environment == "development":
+        if settings.environment in ("development", "test"):
             await create_tables()
         logger.info("PostgreSQL connected successfully")
+        reset = await reset_interrupted_builds()
+        if reset:
+            logger.warning(f"Reset {reset} document(s) left mid graph build")
     except Exception as e:
         logger.error(f"PostgreSQL connection failed: {e}")
 
     # Initialize Neo4j
     try:
         await init_neo4j()
-        await create_neo4j_indexes()
-        logger.info("Neo4j connected successfully")
+        # The driver connects lazily, so verify before claiming success.
+        neo4j_status = await check_neo4j_connection()
+        if neo4j_status.get("connected"):
+            await create_neo4j_indexes()
+            logger.info("Neo4j connected successfully")
+        else:
+            logger.warning(f"Neo4j unavailable: {neo4j_status.get('message')}")
     except Exception as e:
         logger.warning(f"Neo4j connection failed: {e}")
 
@@ -99,6 +119,24 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(api_v1_router, prefix="/api/v1")
+
+
+async def graph_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Map Neo4j connectivity failures to 503 instead of an unhandled 500."""
+    logger.warning(f"Graph database unavailable on {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": "GRAPH_UNAVAILABLE",
+                "message": "The knowledge graph database is unavailable. Please try again later.",
+            }
+        },
+    )
+
+
+for _exc in GRAPH_UNAVAILABLE_ERRORS:
+    app.add_exception_handler(_exc, graph_unavailable_handler)
 
 
 @app.get("/", tags=["Root"])

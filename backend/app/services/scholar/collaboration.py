@@ -302,6 +302,13 @@ class AnnotationCRDT:
         self._pending_operations = []
         return ops
 
+    def get(self, annotation_id: str) -> Optional[Annotation]:
+        """Get one annotation, or None if it is missing or deleted."""
+        annotation = self._annotations.get(annotation_id)
+        if annotation is None or annotation.is_deleted:
+            return None
+        return annotation
+
     def get_annotations(
         self,
         include_deleted: bool = False,
@@ -326,6 +333,27 @@ class AnnotationService:
         if document_id not in self._documents:
             self._documents[document_id] = AnnotationCRDT(replica_id)
         return self._documents[document_id]
+
+    @staticmethod
+    def _is_visible(annotation: Annotation, user_id: str) -> bool:
+        """Whether ``user_id`` may see the annotation (as in get_annotations)."""
+        return (
+            annotation.visibility != AnnotationVisibility.PRIVATE
+            or annotation.user_id == user_id
+        )
+
+    def _get_own(
+        self, crdt: AnnotationCRDT, annotation_id: str, user_id: str
+    ) -> Optional[Annotation]:
+        """The user's own live annotation, or None.
+
+        Someone else's annotation is reported exactly like a missing one,
+        so only its author can edit, re-publish or delete it.
+        """
+        annotation = crdt.get(annotation_id)
+        if annotation is None or annotation.user_id != user_id:
+            return None
+        return annotation
 
     def create_annotation(
         self,
@@ -371,15 +399,16 @@ class AnnotationService:
         user_id: str,
         updates: dict,
     ) -> Optional[Annotation]:
-        """Update an existing annotation."""
-        crdt = self._get_crdt(document_id, user_id)
-        crdt.update(annotation_id, user_id, updates)
+        """Update one of the user's annotations.
 
-        annotations = crdt.get_annotations()
-        for a in annotations:
-            if a.annotation_id == annotation_id:
-                return a
-        return None
+        Returns None if the annotation is missing, deleted or not the user's.
+        """
+        crdt = self._get_crdt(document_id, user_id)
+        annotation = self._get_own(crdt, annotation_id, user_id)
+        if annotation is None:
+            return None
+        crdt.update(annotation_id, user_id, updates)
+        return annotation
 
     def delete_annotation(
         self,
@@ -387,8 +416,14 @@ class AnnotationService:
         annotation_id: str,
         user_id: str,
     ) -> bool:
-        """Delete an annotation."""
+        """Delete one of the user's annotations.
+
+        Returns False if the annotation is missing, already deleted or not
+        the user's.
+        """
         crdt = self._get_crdt(document_id, user_id)
+        if self._get_own(crdt, annotation_id, user_id) is None:
+            return False
         op = crdt.delete(annotation_id, user_id)
         return op is not None
 
@@ -399,22 +434,26 @@ class AnnotationService:
         user_id: str,
         emoji: str,
     ) -> Optional[Annotation]:
-        """Add a reaction to an annotation."""
-        crdt = self._get_crdt(document_id, user_id)
+        """Add a reaction to an annotation the user can see.
 
-        for annotation in crdt.get_annotations():
-            if annotation.annotation_id == annotation_id:
-                if emoji not in annotation.reactions:
-                    annotation.reactions[emoji] = []
-                if user_id not in annotation.reactions[emoji]:
-                    annotation.reactions[emoji].append(user_id)
-                    crdt.update(
-                        annotation_id,
-                        user_id,
-                        {"reactions": annotation.reactions},
-                    )
-                return annotation
-        return None
+        Returns None if the annotation is missing, deleted or another
+        user's private annotation.
+        """
+        crdt = self._get_crdt(document_id, user_id)
+        annotation = crdt.get(annotation_id)
+        if annotation is None or not self._is_visible(annotation, user_id):
+            return None
+
+        if emoji not in annotation.reactions:
+            annotation.reactions[emoji] = []
+        if user_id not in annotation.reactions[emoji]:
+            annotation.reactions[emoji].append(user_id)
+            crdt.update(
+                annotation_id,
+                user_id,
+                {"reactions": annotation.reactions},
+            )
+        return annotation
 
     def get_annotations(
         self,
@@ -444,7 +483,7 @@ class AnnotationService:
         result = []
         for a in annotations:
             # Visibility filter
-            if a.visibility == AnnotationVisibility.PRIVATE and a.user_id != user_id:
+            if not self._is_visible(a, user_id):
                 continue
 
             if visibility_filter and a.visibility not in visibility_filter:

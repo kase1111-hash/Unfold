@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   RotateCcw,
   Check,
@@ -25,8 +25,10 @@ interface Flashcard {
 
 interface FlashcardReviewProps {
   flashcards: Flashcard[];
-  onReview?: (cardId: string, quality: number) => void;
+  onReview?: (cardId: string, quality: number) => void | Promise<void>;
   onComplete?: (results: ReviewResult[]) => void;
+  // Shown as "Done" on the summary screen (e.g. back to the card overview)
+  onExit?: () => void;
 }
 
 interface ReviewResult {
@@ -47,6 +49,7 @@ export function FlashcardReview({
   flashcards,
   onReview,
   onComplete,
+  onExit,
 }: FlashcardReviewProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
@@ -54,6 +57,14 @@ export function FlashcardReview({
   const [results, setResults] = useState<ReviewResult[]>([]);
   const [cardStartTime, setCardStartTime] = useState(Date.now());
   const [isComplete, setIsComplete] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  // Ref twin of isSubmitting: blocks a double click before the re-render
+  const submittingRef = useRef(false);
+  // Every onReview call of this session, awaited before completing
+  const pendingReviewsRef = useRef<Promise<void>[]>([]);
+  // Cards already submitted: rating one again (after Previous or Restart) only
+  // updates the local result, it must not apply a second SM-2 review
+  const reviewedIdsRef = useRef(new Set<string>());
 
   const currentCard = flashcards[currentIndex];
   const progress = ((currentIndex) / flashcards.length) * 100;
@@ -63,7 +74,8 @@ export function FlashcardReview({
   }, []);
 
   const handleRate = useCallback(
-    (quality: number) => {
+    async (quality: number) => {
+      if (submittingRef.current) return;
       const timeMs = Date.now() - cardStartTime;
 
       const result: ReviewResult = {
@@ -72,8 +84,18 @@ export function FlashcardReview({
         time_ms: timeMs,
       };
 
-      setResults((prev) => [...prev, result]);
-      onReview?.(currentCard.card_id, quality);
+      const nextResults = [
+        ...results.filter((r) => r.card_id !== result.card_id),
+        result,
+      ];
+      setResults(nextResults);
+
+      if (!reviewedIdsRef.current.has(currentCard.card_id)) {
+        reviewedIdsRef.current.add(currentCard.card_id);
+        pendingReviewsRef.current.push(
+          Promise.resolve(onReview?.(currentCard.card_id, quality))
+        );
+      }
 
       // Move to next card or complete
       if (currentIndex < flashcards.length - 1) {
@@ -82,8 +104,17 @@ export function FlashcardReview({
         setShowHint(false);
         setCardStartTime(Date.now());
       } else {
+        // Wait until every review is saved before the parent reloads due cards
+        submittingRef.current = true;
+        setIsSubmitting(true);
+        try {
+          await Promise.allSettled(pendingReviewsRef.current);
+        } finally {
+          submittingRef.current = false;
+          setIsSubmitting(false);
+        }
         setIsComplete(true);
-        onComplete?.([...results, result]);
+        onComplete?.(nextResults);
       }
     },
     [currentCard, currentIndex, flashcards.length, cardStartTime, results, onReview, onComplete]
@@ -146,9 +177,16 @@ export function FlashcardReview({
           </div>
         </div>
 
-        <Button onClick={handleRestart} leftIcon={<RotateCcw className="w-4 h-4" />}>
-          Review Again
-        </Button>
+        <div className="flex justify-center gap-3">
+          <Button
+            variant={onExit ? "secondary" : "primary"}
+            onClick={handleRestart}
+            leftIcon={<RotateCcw className="w-4 h-4" />}
+          >
+            Review Again
+          </Button>
+          {onExit && <Button onClick={onExit}>Done</Button>}
+        </div>
       </div>
     );
   }
@@ -278,8 +316,9 @@ export function FlashcardReview({
               <button
                 key={btn.quality}
                 onClick={() => handleRate(btn.quality)}
+                disabled={isSubmitting}
                 className={cn(
-                  "flex flex-col items-center gap-1 px-4 py-2 rounded-lg text-white transition-colors",
+                  "flex flex-col items-center gap-1 px-4 py-2 rounded-lg text-white transition-colors disabled:opacity-60 disabled:cursor-not-allowed",
                   btn.color
                 )}
               >

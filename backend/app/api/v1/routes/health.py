@@ -1,9 +1,10 @@
 """Health check endpoints."""
 
+import logging
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -15,6 +16,30 @@ from app.db import (
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger(__name__)
+
+# Messages shown for a service that is not connected. The checks' own
+# messages carry raw driver/exception text (hosts, ports, resolved
+# addresses), and /health/detailed needs no authentication, so that text
+# is logged instead of returned.
+_UNAVAILABLE_MESSAGES = {
+    "postgresql": "PostgreSQL is unavailable",
+    "neo4j": "Neo4j is unavailable",
+    "vector_store": "Vector store is unavailable",
+}
+
+
+def _public_status(service: str, result: dict) -> dict:
+    """The check result, with a generic message if the service is down."""
+    if result.get("connected", False):
+        return result
+    logger.warning(
+        "Health check: %s not connected (status=%s): %s",
+        service,
+        result.get("status"),
+        result.get("message"),
+    )
+    return {**result, "message": _UNAVAILABLE_MESSAGES[service]}
 
 
 class HealthStatus(BaseModel):
@@ -29,17 +54,27 @@ class HealthStatus(BaseModel):
 class DetailedHealthStatus(HealthStatus):
     """Detailed health check with service status."""
 
-    services: dict[str, dict[str, str | bool]]
+    # int before bool: otherwise pydantic coerces vector_count 0/1 to bool
+    # and rejects any larger count.
+    services: dict[str, dict[str, str | int | bool]]
 
 
-@router.get("/health", response_model=HealthStatus)
-async def health_check() -> HealthStatus:
+@router.get(
+    "/health",
+    response_model=HealthStatus,
+    responses={503: {"model": HealthStatus, "description": "PostgreSQL unreachable"}},
+)
+async def health_check(response: Response) -> HealthStatus:
     """Basic health check endpoint.
 
-    Verifies PostgreSQL connectivity and returns overall status.
+    Verifies PostgreSQL connectivity and returns overall status. Answers 503
+    when PostgreSQL is unreachable, so container health checks (curl -f)
+    actually fail.
     """
     pg_status = await check_postgres_connection()
     pg_ok = pg_status.get("connected", False)
+    if not pg_ok:
+        response.status_code = 503
 
     return HealthStatus(
         status="healthy" if pg_ok else "degraded",
@@ -62,13 +97,15 @@ async def detailed_health_check() -> DetailedHealthStatus:
     services = {}
 
     # Check PostgreSQL
-    services["postgresql"] = await _check_postgresql()
+    services["postgresql"] = _public_status("postgresql", await _check_postgresql())
 
     # Check Neo4j
-    services["neo4j"] = await _check_neo4j()
+    services["neo4j"] = _public_status("neo4j", await _check_neo4j())
 
     # Check Vector Store
-    services["vector_store"] = await _check_vector_store()
+    services["vector_store"] = _public_status(
+        "vector_store", await _check_vector_store()
+    )
 
     # Determine overall status
     all_healthy = all(svc.get("connected", False) for svc in services.values())
@@ -106,11 +143,16 @@ async def _check_vector_store() -> dict[str, str | bool]:
 
 
 @router.get("/health/ready")
-async def readiness_check() -> dict[str, str]:
+async def readiness_check(response: Response) -> dict[str, str]:
     """Kubernetes-style readiness probe.
 
-    Returns 200 if the application is ready to receive traffic.
+    Returns 200 if the application is ready to receive traffic, i.e. it can
+    reach PostgreSQL; 503 otherwise.
     """
+    pg_status = await check_postgres_connection()
+    if not pg_status.get("connected", False):
+        response.status_code = 503
+        return {"status": "not_ready"}
     return {"status": "ready"}
 
 

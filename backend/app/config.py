@@ -17,6 +17,15 @@ class ConfigurationError(Exception):
     pass
 
 
+def _is_placeholder(value: str) -> bool:
+    """True for template values such as 'changeme' or 'CHANGE_ME_...'.
+
+    The example env files ship values like these; they are publicly known,
+    so they must never be accepted as real secrets.
+    """
+    return "change" in value.lower()
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -31,7 +40,7 @@ class Settings(BaseSettings):
     app_name: str = "Unfold API"
     app_version: str = "0.1.0"
     debug: bool = False
-    environment: Literal["development", "staging", "production"] = "development"
+    environment: Literal["development", "test", "staging", "production"] = "development"
 
     # Server
     host: str = "0.0.0.0"
@@ -70,11 +79,19 @@ class Settings(BaseSettings):
 
     # Rate Limiting
     rate_limit_enabled: bool = True
-    rate_limit_requests_per_minute: int = 60
+    # Per client IP. The UI sends one request per flashcard review plus page
+    # loads and a 3 s status poll, so an ordinary 50-card session already
+    # exceeds 60/min; 300 leaves room for that while still capping abuse.
+    rate_limit_requests_per_minute: int = 300
     rate_limit_auth_requests_per_minute: int = 10  # Stricter for auth endpoints
 
-    # CORS
-    cors_origins: list[str] = ["http://localhost:3000"]
+    # CORS. Accepts a comma-separated string, a single URL or a JSON list.
+    # The ``| str`` matters: pydantic-settings 2.1 JSON-decodes plain list
+    # fields from the environment before validators run, so a value such as
+    # "https://a.example,https://b.example" would crash Settings. With the
+    # union it falls through to parse_cors_origins below, which always
+    # returns list[str].
+    cors_origins: list[str] | str = ["http://localhost:3000"]
 
     # Redis Cache
     redis_url: str = "redis://localhost:6379/0"
@@ -94,10 +111,10 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
-        """Parse CORS origins from comma-separated string or list."""
+        """Parse CORS origins from a comma-separated string or a list."""
         if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
+            v = v.split(",")
+        return [origin.strip() for origin in v if origin.strip()]
 
     @model_validator(mode="after")
     def validate_production_settings(self) -> "Settings":
@@ -123,6 +140,12 @@ class Settings(BaseSettings):
                 "JWT_SECRET must be at least 32 characters in production"
             )
 
+        if is_production and _is_placeholder(self.jwt_secret):
+            raise ConfigurationError(
+                "JWT_SECRET is still a placeholder value; generate a real secret "
+                "for production/staging"
+            )
+
         # Database URL validation
         if self.database_url is None:
             if is_production:
@@ -143,9 +166,14 @@ class Settings(BaseSettings):
             # Use development default
             self.neo4j_password = "changeme"
 
-        if is_production and self.neo4j_password in ("password", "changeme"):
+        if is_production and (
+            not self.neo4j_password
+            or self.neo4j_password == "password"
+            or _is_placeholder(self.neo4j_password)
+        ):
             raise ConfigurationError(
-                "NEO4J_PASSWORD must be changed from its default in production"
+                "NEO4J_PASSWORD must be changed from its default/placeholder "
+                "value in production"
             )
 
         return self

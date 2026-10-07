@@ -9,6 +9,7 @@ The integrated pipeline uses Ollama as the default LLM provider for local/offlin
 operation, with fallback to cloud APIs when configured.
 """
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -133,7 +134,10 @@ class RelationExtractor:
         """
         client = self._get_openai_client()
 
-        response = client.chat.completions.create(
+        # The OpenAI client is synchronous; run it in a thread so the request
+        # doesn't block the event loop.
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=settings.openai_chat_model,
             messages=[
                 {

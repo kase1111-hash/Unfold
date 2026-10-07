@@ -38,10 +38,14 @@ yarn-error.log*
 .next/
 out/
 
-# Environment Variables
+# Environment Variables (real ones: .env, .env.production, ...; the
+# *.example templates stay tracked)
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
 # IDE
 .idea/
@@ -85,3 +89,6 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
+
+# Uploaded documents written by the backend at runtime
+uploads/

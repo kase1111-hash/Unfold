@@ -65,3 +65,7 @@ Thumbs.db
 # Cache
 .cache/
 *.cache
+
+# Runtime artifacts (uploaded files, coverage reports)
+uploads/
+coverage.xml

@@ -1,9 +1,14 @@
 import axios, { AxiosError, AxiosInstance, AxiosRequestConfig } from "axios";
 import type {
-  ApiError,
   Document,
+  DocumentListResponse,
+  DueFlashcard,
+  Flashcard,
+  FlashcardReviewResult,
+  GraphBuildResult,
   GraphNode,
   PaginatedResponse,
+  StudyStatsData,
   User,
   CitationTree,
   CitationNode,
@@ -13,7 +18,15 @@ import type {
   Annotation,
 } from "@/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+// NEXT_PUBLIC_API_URL is documented both with and without the "/api/v1" prefix
+// (CI and docker-compose pass "http://localhost:8000"), so accept either form.
+// Keep in sync with the rewrite in next.config.js.
+export function normalizeApiUrl(raw: string | undefined): string {
+  const base = (raw || "http://localhost:8000").trim().replace(/\/+$/, "");
+  return base.endsWith("/api/v1") ? base : `${base}/api/v1`;
+}
+
+const API_URL = normalizeApiUrl(process.env.NEXT_PUBLIC_API_URL);
 
 // New auth response type (refresh token is in httpOnly cookie)
 interface AuthResponse {
@@ -30,9 +43,25 @@ interface AccessTokenResponse {
   expires_in: number;
 }
 
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired. Please sign in again.";
+
+// Thrown instead of the refresh request's own error (e.g. 401 "Refresh token
+// required") when a 401 cannot be fixed by refreshing the token: the session is
+// over and the dashboard layout is already redirecting to /login.
+export class SessionExpiredError extends Error {
+  constructor() {
+    super(SESSION_EXPIRED_MESSAGE);
+    this.name = "SessionExpiredError";
+  }
+}
+
 class ApiClient {
   private client: AxiosInstance;
   private accessToken: string | null = null;
+  // One shared refresh for all requests that hit a 401 at the same time
+  // (/auth/refresh is rate limited together with login/register).
+  private refreshPromise: Promise<AccessTokenResponse> | null = null;
+  private authFailureHandler: (() => void) | null = null;
 
   constructor() {
     this.client = axios.create({
@@ -72,21 +101,24 @@ class ApiClient {
         ) {
           originalRequest._retry = true;
 
+          let newToken: AccessTokenResponse;
           try {
-            // Refresh token is sent automatically via httpOnly cookie
-            const newToken = await this.refreshTokens();
-            this.setAccessToken(newToken.access_token);
-
-            // Retry original request
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
-            }
-            return this.client(originalRequest);
+            newToken = await this.refreshAccessToken();
           } catch (refreshError) {
-            // Refresh failed, clear tokens
+            // Only a rejected refresh (401) ends the session. A refresh that hit
+            // a 429, a 5xx or the network says nothing about the session: keep
+            // the token and let the caller show a retryable error.
+            if (!isUnauthorized(refreshError)) throw refreshError;
             this.clearTokens();
-            throw refreshError;
+            this.authFailureHandler?.();
+            throw new SessionExpiredError();
           }
+
+          // Retry original request
+          if (originalRequest.headers) {
+            originalRequest.headers.Authorization = `Bearer ${newToken.access_token}`;
+          }
+          return this.client(originalRequest);
         }
 
         return Promise.reject(error);
@@ -122,6 +154,11 @@ class ApiClient {
 
   isAuthenticated(): boolean {
     return !!this.accessToken;
+  }
+
+  // Called when the session can no longer be refreshed
+  onAuthFailure(handler: () => void) {
+    this.authFailureHandler = handler;
   }
 
   // Auth endpoints
@@ -168,6 +205,20 @@ class ApiClient {
     return response.data;
   }
 
+  // Get a new access token from the refresh cookie and store it. Concurrent
+  // callers share one request (/auth/refresh is rate limited with login).
+  refreshAccessToken(): Promise<AccessTokenResponse> {
+    this.refreshPromise ??= this.refreshTokens()
+      .then((token) => {
+        this.setAccessToken(token.access_token);
+        return token;
+      })
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+    return this.refreshPromise;
+  }
+
   async getCurrentUser(): Promise<User> {
     const response = await this.client.get<User>("/auth/me");
     return response.data;
@@ -194,13 +245,22 @@ class ApiClient {
     page = 1,
     pageSize = 20
   ): Promise<PaginatedResponse<Document>> {
-    const response = await this.client.get<PaginatedResponse<Document>>(
-      "/documents",
-      {
-        params: { page, page_size: pageSize },
-      }
-    );
-    return response.data;
+    // Canonical path has the trailing slash (no 307 redirect round trip)
+    const response = await this.client.get<DocumentListResponse>("/documents/", {
+      params: { page, page_size: pageSize },
+    });
+    // The backend returns flat pagination fields; adapt them to PaginatedResponse
+    const { data, total, page: currentPage, page_size } = response.data;
+    return {
+      status: "success",
+      data,
+      pagination: {
+        total,
+        page: currentPage,
+        page_size,
+        total_pages: Math.max(1, Math.ceil(total / Math.max(1, page_size))),
+      },
+    };
   }
 
   async getDocument(docId: string): Promise<Document> {
@@ -226,24 +286,12 @@ class ApiClient {
   }
 
   // Knowledge Graph endpoints
-  async buildGraph(
-    text: string,
-    sourceDocId: string,
-    options?: {
-      extractRelations?: boolean;
-      generateEmbeddings?: boolean;
-    }
-  ): Promise<{
-    nodes_created: number;
-    relations_created: number;
-    node_ids: string[];
-  }> {
-    const response = await this.client.post("/graph/build", {
-      text,
-      source_doc_id: sourceDocId,
-      extract_relations: options?.extractRelations ?? true,
-      generate_embeddings: options?.generateEmbeddings ?? true,
-    });
+
+  // (Re)build a document's graph from its stored text, server side
+  async buildDocumentGraph(docId: string): Promise<GraphBuildResult> {
+    const response = await this.client.post<GraphBuildResult>(
+      `/graph/documents/${docId}/build`
+    );
     return response.data;
   }
 
@@ -255,7 +303,14 @@ class ApiClient {
   }): Promise<{ nodes: GraphNode[]; total: number }> {
     const response = await this.client.get<{ nodes: GraphNode[]; total: number }>(
       "/graph/nodes",
-      { params }
+      {
+        params: {
+          query: params?.query,
+          node_type: params?.nodeType,
+          source_doc_id: params?.sourceDocId,
+          limit: params?.limit,
+        },
+      }
     );
     return response.data;
   }
@@ -275,7 +330,14 @@ class ApiClient {
   ): Promise<{ nodes: GraphNode[]; total: number }> {
     const response = await this.client.get<{ nodes: GraphNode[]; total: number }>(
       `/graph/nodes/${nodeId}/related`,
-      { params: options }
+      {
+        params: {
+          relation_types: options?.relationTypes,
+          max_depth: options?.maxDepth,
+          limit: options?.limit,
+        },
+        paramsSerializer: { indexes: null },
+      }
     );
     return response.data;
   }
@@ -338,49 +400,50 @@ class ApiClient {
   }
 
   // Learning endpoints
-  async getFlashcardsDue(limit = 20): Promise<{
-    due_cards: Array<{
-      card_id: string;
-      days_overdue: number;
-      repetitions: number;
-      easiness_factor: number;
-    }>;
-    total_due: number;
-  }> {
-    const response = await this.client.get("/learning/flashcards/due", {
-      params: { limit },
-    });
-    return response.data;
-  }
 
-  async reviewFlashcard(
-    cardId: string,
-    quality: number
+  // Generates cards from the caller's stored document text and saves the new
+  // ones: `flashcards` holds only newly stored cards (count may be 0), a card
+  // whose question already exists for this document is counted in
+  // duplicates_skipped instead.
+  async generateFlashcards(
+    documentId: string,
+    numCards?: number
   ): Promise<{
-    card_id: string;
-    next_review: string;
-    interval_days: number;
-    easiness_factor: number;
-    repetitions: number;
-    retention_rate: number;
+    document_id: string;
+    flashcards: Flashcard[];
+    count: number;
+    duplicates_skipped: number;
   }> {
-    const response = await this.client.post("/learning/flashcards/review", {
-      card_id: cardId,
-      quality,
+    const response = await this.client.post("/learning/flashcards/generate", {
+      document_id: documentId,
+      num_cards: numCards,
     });
     return response.data;
   }
 
-  async getStudyStats(): Promise<{
-    total_cards: number;
-    due_now: number;
-    due_today: number;
-    average_ef: number;
-    average_retention: number;
-    mature_cards: number;
-    learning_cards: number;
-  }> {
-    const response = await this.client.get("/learning/flashcards/stats");
+  async getFlashcardsDue(
+    limit = 20,
+    documentId?: string
+  ): Promise<{ due_cards: DueFlashcard[]; total_due: number }> {
+    const response = await this.client.get("/learning/flashcards/due", {
+      params: { limit, document_id: documentId },
+    });
+    return response.data;
+  }
+
+  async reviewFlashcard(cardId: string, quality: number): Promise<FlashcardReviewResult> {
+    const response = await this.client.post<FlashcardReviewResult>(
+      "/learning/flashcards/review",
+      {
+        card_id: cardId,
+        quality,
+      }
+    );
+    return response.data;
+  }
+
+  async getStudyStats(): Promise<StudyStatsData> {
+    const response = await this.client.get<StudyStatsData>("/learning/flashcards/stats");
     return response.data;
   }
 
@@ -658,11 +721,45 @@ class ApiClient {
 // Export singleton instance
 export const api = new ApiClient();
 
+// A 401 from the API: there is no valid session (also after a refresh was tried)
+export function isUnauthorized(error: unknown): boolean {
+  return (
+    error instanceof SessionExpiredError ||
+    (axios.isAxiosError(error) && error.response?.status === 401)
+  );
+}
+
+// The code of an app error ({detail: {code, message}}), e.g. "BUILD_IN_PROGRESS"
+export function getErrorCode(error: unknown): string | null {
+  if (!axios.isAxiosError(error)) return null;
+  const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+  const code = detail && typeof detail === "object" ? (detail as { code?: unknown }).code : null;
+  return typeof code === "string" ? code : null;
+}
+
 // Helper to extract error message
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const apiError = error.response?.data as { detail?: { message?: string } } | undefined;
-    return apiError?.detail?.message || error.message;
+    // App errors are {detail: {code, message}} (e.g. 503 GRAPH_UNAVAILABLE,
+    // 400 CORRUPT_PDF); FastAPI defaults are {detail: "..."} and, for request
+    // validation, {detail: [{msg, ...}]}.
+    const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail) && typeof detail[0]?.msg === "string") return detail[0].msg;
+    if (detail && typeof detail === "object") {
+      const message = (detail as { message?: unknown }).message;
+      if (typeof message === "string" && message) return message;
+    }
+    if (!error.response) {
+      // Also what an unhandled 500 looks like cross-origin: it carries no CORS
+      // headers, so the browser hides the response
+      return "Could not reach the server, or it ran into an error. Please try again.";
+    }
+    if (error.response.status >= 500) {
+      // e.g. a plain-text "Internal Server Error" (same-origin deployment)
+      return "The server ran into an error. Please try again later.";
+    }
+    return error.message;
   }
   if (error instanceof Error) {
     return error.message;

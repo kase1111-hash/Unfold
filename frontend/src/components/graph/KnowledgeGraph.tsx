@@ -33,43 +33,77 @@ const NODE_RADIUS: Record<NodeType, number> = {
   Term: 8,
 };
 
-export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
+// The boundary must sit ABOVE the component whose effects run D3; a boundary
+// rendered by KnowledgeGraphInner itself cannot catch KnowledgeGraphInner's errors.
+export function KnowledgeGraph(props: KnowledgeGraphProps) {
+  return (
+    <ErrorBoundary key={props.documentId ?? "all"}>
+      <KnowledgeGraphInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function KnowledgeGraphInner({ documentId, className }: KnowledgeGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const selectedNodeIdRef = useRef<string | null>(null);
 
   const {
     nodes,
     links,
+    totalNodes,
     isLoading,
     error,
     selectedNodeId,
     hoveredNodeId,
     zoomLevel,
+    buildingDocIds,
+    buildError: lastBuildError,
+    isExpanding,
+    expandError,
     loadGraphForDocument,
+    loadGraphForAllDocuments,
+    buildGraphForDocument,
     selectNode,
     setHoveredNode,
     setZoom,
     loadRelatedNodes,
   } = useGraphStore();
 
-  // Load graph data when documentId changes
-  useEffect(() => {
+  selectedNodeIdRef.current = selectedNodeId;
+
+  // Build state of this document only (a build of another one may be running)
+  const isBuilding = !!documentId && buildingDocIds.includes(documentId);
+  const buildError =
+    documentId && lastBuildError?.docId === documentId ? lastBuildError.message : null;
+
+  // Load graph data when documentId changes (no document: all of the user's
+  // documents). Each load replaces the previous graph, so nothing stale remains.
+  const loadGraph = useCallback(() => {
     if (documentId) {
       loadGraphForDocument(documentId);
+    } else {
+      loadGraphForAllDocuments();
     }
-  }, [documentId, loadGraphForDocument]);
+  }, [documentId, loadGraphForDocument, loadGraphForAllDocuments]);
+
+  useEffect(() => {
+    loadGraph();
+  }, [loadGraph]);
 
   // D3 visualization
   useEffect(() => {
-    if (!svgRef.current || !containerRef.current || nodes.length === 0) return;
+    if (!svgRef.current || !containerRef.current) return;
 
     const svg = d3.select(svgRef.current);
+    // Clear previous content (also when the graph became empty)
+    svg.selectAll("*").remove();
+    if (nodes.length === 0) return;
+
     const container = containerRef.current;
     const width = container.clientWidth;
     const height = container.clientHeight || 500;
-
-    // Clear previous content
-    svg.selectAll("*").remove();
 
     // Set up SVG
     svg.attr("width", width).attr("height", height);
@@ -84,6 +118,7 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
       });
 
     svg.call(zoom);
+    zoomRef.current = zoom;
 
     // Create main group for zoom/pan
     const g = svg.append("g");
@@ -165,7 +200,7 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
       .attr("stroke-width", 2)
       .on("click", (event, d) => {
         event.stopPropagation();
-        selectNode(d.node_id === selectedNodeId ? null : d.node_id);
+        selectNode(d.node_id === selectedNodeIdRef.current ? null : d.node_id);
       })
       .on("dblclick", (event, d) => {
         event.stopPropagation();
@@ -219,36 +254,28 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
     return () => {
       simulation.stop();
     };
-  }, [nodes, links, selectedNodeId, selectNode, setHoveredNode, setZoom, loadRelatedNodes]);
+  }, [nodes, links, selectNode, setHoveredNode, setZoom, loadRelatedNodes]);
 
-  // Zoom controls - use Function type to handle D3 zoom API
+  // Zoom controls drive the zoom behavior attached in the D3 effect (a fresh
+  // d3.zoom() would change the stored transform without moving the graph)
   const handleZoomIn = useCallback(() => {
     if (svgRef.current) {
       const svg = d3.select(svgRef.current);
-      const zoom = d3.zoom<SVGSVGElement, unknown>();
-      const transition = svg.transition();
-      (zoom.scaleBy as Function)(transition, 1.5);
+      if (zoomRef.current) svg.transition().call(zoomRef.current.scaleBy, 1.5);
     }
   }, []);
 
   const handleZoomOut = useCallback(() => {
     if (svgRef.current) {
       const svg = d3.select(svgRef.current);
-      const zoom = d3.zoom<SVGSVGElement, unknown>();
-      const transition = svg.transition();
-      (zoom.scaleBy as Function)(transition, 0.67);
+      if (zoomRef.current) svg.transition().call(zoomRef.current.scaleBy, 0.67);
     }
   }, []);
 
   const handleReset = useCallback(() => {
     if (svgRef.current && containerRef.current) {
       const svg = d3.select(svgRef.current);
-      const width = containerRef.current.clientWidth;
-      const height = containerRef.current.clientHeight || 500;
-      const zoom = d3.zoom<SVGSVGElement, unknown>();
-      const transition = svg.transition();
-      const transform = d3.zoomIdentity.translate(width / 2, height / 2).scale(1);
-      (zoom.transform as Function)(transition, transform);
+      if (zoomRef.current) svg.transition().call(zoomRef.current.transform, d3.zoomIdentity);
     }
   }, []);
 
@@ -278,27 +305,25 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
           className
         )}
       >
-        <div className="flex flex-col items-center gap-3 text-center px-6">
+        <div role="alert" className="flex flex-col items-center gap-3 text-center px-6">
           <AlertCircle className="w-8 h-8 text-red-500" />
+          {/* Backend message, e.g. 503 GRAPH_UNAVAILABLE when Neo4j is down */}
           <span className="text-slate-600 dark:text-slate-300 text-sm">
             {error}
           </span>
-          {documentId && (
-            <button
-              onClick={() => loadGraphForDocument(documentId)}
-              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Retry
-            </button>
-          )}
+          <button
+            onClick={loadGraph}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <ErrorBoundary>
     <div
       ref={containerRef}
       className={cn(
@@ -379,23 +404,79 @@ export function KnowledgeGraph({ documentId, className }: KnowledgeGraphProps) {
         </div>
       )}
 
+      {/* Graph too large to load in full */}
+      {totalNodes > nodes.length && nodes.length > 0 && (
+        <div
+          data-testid="graph-truncated"
+          className="absolute bottom-4 left-4 z-10 max-w-xs bg-white dark:bg-slate-800 px-3 py-2 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 text-xs text-slate-600 dark:text-slate-300"
+        >
+          Showing the {nodes.length.toLocaleString()} most connected of{" "}
+          {totalNodes.toLocaleString()} concepts
+        </div>
+      )}
+
+      {/* Expanding related nodes (does not replace the graph) */}
+      {(isExpanding || expandError) && (
+        <div className="absolute bottom-4 right-4 z-10 max-w-xs bg-white dark:bg-slate-800 px-3 py-2 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 text-xs">
+          {isExpanding ? (
+            <span className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              Loading related nodes...
+            </span>
+          ) : (
+            <span role="alert" className="text-red-600 dark:text-red-400">
+              Could not load related nodes: {expandError}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Graph SVG */}
-      <svg ref={svgRef} className="w-full h-full min-h-[500px]" />
+      <svg
+        ref={svgRef}
+        data-testid="knowledge-graph"
+        className="w-full h-full min-h-[500px]"
+      />
 
       {/* Empty state */}
       {nodes.length === 0 && !isLoading && (
         <div className="absolute inset-0 flex items-center justify-center">
-          <div className="text-center">
+          <div className="text-center max-w-sm px-6">
             <div className="text-slate-400 dark:text-slate-500 mb-2">
               No graph data available
             </div>
-            <div className="text-sm text-slate-500 dark:text-slate-400">
-              Upload a document to generate a knowledge graph
-            </div>
+            {documentId ? (
+              <>
+                <div className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                  The knowledge graph is built in the background after upload. If it
+                  does not appear, build it now.
+                </div>
+                <button
+                  onClick={() => buildGraphForDocument(documentId)}
+                  disabled={isBuilding}
+                  className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-60 rounded-lg transition-colors"
+                >
+                  {isBuilding ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  {isBuilding ? "Building knowledge graph..." : "Build knowledge graph"}
+                </button>
+                {buildError && (
+                  <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">
+                    {buildError}
+                  </p>
+                )}
+              </>
+            ) : (
+              <div className="text-sm text-slate-500 dark:text-slate-400">
+                Pick a document to build its knowledge graph
+              </div>
+            )}
           </div>
         </div>
       )}
     </div>
-    </ErrorBoundary>
   );
 }

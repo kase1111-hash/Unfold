@@ -9,9 +9,9 @@ Unfold is an LLM-powered AI reading assistant and semantic comprehension platfor
 ### Backend
 - **Language**: Python 3.11+
 - **Framework**: FastAPI (async)
-- **AI/ML**: LangChain, spaCy, multiple LLM providers (Ollama, OpenAI, Anthropic)
-- **Databases**: PostgreSQL (user data), Neo4j 5+ (knowledge graphs), FAISS/Pinecone (vectors), Redis (cache)
-- **Testing**: pytest, pytest-asyncio, pytest-cov
+- **AI/ML**: spaCy, multiple LLM providers (Ollama, OpenAI, Anthropic)
+- **Databases**: PostgreSQL (user data, documents, flashcards), Neo4j 5+ (knowledge graphs), FAISS (vectors), Redis (optional cache, not on the request path)
+- **Testing**: pytest, pytest-asyncio, pytest-cov (in `backend/requirements-dev.txt`)
 
 ### Frontend
 - **Framework**: Next.js 14 with React 18+
@@ -37,7 +37,8 @@ Unfold/
 │   │   └── repositories/      # Data access layer
 │   ├── tests/                 # Unit and integration tests
 │   ├── alembic/               # Database migrations
-│   └── requirements.txt
+│   ├── requirements.txt       # Runtime dependencies
+│   └── requirements-dev.txt   # + test/lint tools
 ├── frontend/                   # Next.js React application
 │   ├── src/
 │   │   ├── app/               # App Router pages
@@ -124,16 +125,22 @@ The project follows a 5-layer modular architecture:
 
 ## Database Notes
 
-- **PostgreSQL**: User data, sessions, documents
-- **Neo4j**: Knowledge graphs with semantic relationships
+- **PostgreSQL**: Users, documents (with extracted text) and per-user flashcards with SM2 state
+- **Neo4j**: Knowledge graphs with semantic relationships (nodes carry `source_doc_id`)
 - **FAISS**: Vector embeddings for semantic search
-- **Redis**: Caching layer
+- **Redis**: Optional caching layer (not initialized by the app today)
 
 Run migrations with: `make db-migrate`
 
 ## Testing
 
 ### Backend
+Install `requirements-dev.txt`. Tests need PostgreSQL and drop/recreate the
+schema, so `DATABASE_URL` must point at a database whose name ends in `_test`
+(the default is `postgresql://test:test@localhost:5432/unfold_test`). Neo4j
+is optional: tests marked `requires_neo4j` are skipped when `NEO4J_URI` is
+unreachable, and `requires_no_neo4j` tests run only then (CI reruns them with
+`NEO4J_URI=bolt://localhost:7688`).
 ```bash
 cd backend && pytest                    # All tests
 cd backend && pytest tests/unit/        # Unit tests only
@@ -151,15 +158,18 @@ cd frontend && npm run test:e2e:ui      # Interactive UI
 Copy `.env.example` files in backend and frontend directories. Key variables:
 - `JWT_SECRET` - Required in production (32+ chars)
 - `DATABASE_URL` - PostgreSQL connection
-- `NEO4J_URI`, `NEO4J_PASSWORD` - Neo4j connection
+- `NEO4J_URI`, `NEO4J_PASSWORD` - Neo4j connection (user is always `neo4j`)
+- `NEXT_PUBLIC_API_URL` - Frontend API base, including `/api/v1` (e.g. `http://localhost:8000/api/v1`)
 - `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` - LLM providers (optional with Ollama)
 
 ## Security Considerations
 
 - Never commit secrets or `.env` files
 - Use parameterized queries for Neo4j (allowlist validation in place)
-- Rate limiting: 60 req/min general, 10 req/min for auth endpoints
-- Production config enforces explicit secrets (no weak defaults)
+- Rate limiting: 300 req/min general, 10 req/min for auth endpoints, keyed on the
+  peer address (forwarding headers are only trusted via uvicorn's `FORWARDED_ALLOW_IPS`)
+- Production config enforces explicit secrets (no weak defaults or placeholders)
+- Every document, graph and flashcard route checks that the caller owns the data
 
 ## Multi-LLM Support
 

@@ -17,8 +17,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    tesseract-ocr \
-    tesseract-ocr-eng \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,5 +42,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/v1/health || exit 1
 
-# Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run the application. X-Forwarded-For is only honored from peers listed in
+# FORWARDED_ALLOW_IPS (uvicorn default: 127.0.0.1); docker-compose.prod.yml
+# sets it for the nginx proxy in front of the backend.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

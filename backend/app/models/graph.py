@@ -1,10 +1,60 @@
 """Knowledge graph data models."""
 
 from enum import Enum
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field
 
 from app.models.base import TimestampMixin
+
+_INT64_MIN, _INT64_MAX = -(2**63), 2**63 - 1
+
+
+def _primitive_kind(value: Any) -> str | None:
+    """The Neo4j property kind of a primitive value, or None if it isn't one."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "number" if _INT64_MIN <= value <= _INT64_MAX else None
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    return None
+
+
+def check_flat_metadata(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Accept only what Neo4j can store as node/relationship properties.
+
+    Values must be strings, numbers, booleans or null, or arrays of
+    non-null values of one kind (strings, numbers or booleans). Keys must be
+    non-empty. Anything else (nested objects, nested or mixed arrays) is a
+    validation error, i.e. a 422, rather than a database error.
+    """
+    if metadata is None:
+        return None
+    for key, value in metadata.items():
+        if not key or "\x00" in key:
+            raise ValueError("metadata keys must be non-empty strings")
+        if value is None or _primitive_kind(value) is not None:
+            continue
+        if isinstance(value, list):
+            kinds = {_primitive_kind(item) for item in value}
+            if None not in kinds and len(kinds) <= 1:
+                continue
+            raise ValueError(
+                f"metadata['{key}'] must be an array of strings, numbers or "
+                "booleans (one kind, no nulls or nested values)"
+            )
+        raise ValueError(
+            f"metadata['{key}'] must be a string, number, boolean, null or an "
+            "array of those; nested objects are not supported"
+        )
+    return metadata
+
+
+# Caller-supplied metadata stored as graph properties (flat, see above)
+FlatMetadata = Annotated[dict[str, Any] | None, AfterValidator(check_flat_metadata)]
 
 
 class NodeType(str, Enum):
@@ -49,6 +99,9 @@ class GraphNodeCreate(GraphNodeBase):
     """Model for creating a graph node."""
 
     source_doc_id: str = Field(..., description="Source document ID")
+    metadata: FlatMetadata = Field(
+        None, description="Additional metadata: a flat object of primitives"
+    )
 
 
 class GraphNode(GraphNodeBase, TimestampMixin):

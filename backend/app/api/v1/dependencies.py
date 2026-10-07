@@ -8,7 +8,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_session, get_neo4j_session
+from app.models.document import Document
 from app.models.user import User, UserRole
+from app.repositories.document import DocumentRepository
 from app.services.auth.jwt import TokenError, verify_token
 from app.repositories.user import UserRepository
 
@@ -161,6 +163,21 @@ def require_role(required_role: UserRole):
         return current_user
 
     return role_checker
+
+
+async def get_owned_document(db: AsyncSession, doc_id: str, user: User) -> Document:
+    """Load a document owned by ``user``, or raise 404.
+
+    A document owned by someone else is reported exactly like a missing
+    one, so callers can't probe which document IDs exist.
+    """
+    document = await DocumentRepository(db).get_by_id(doc_id, owner_id=user.user_id)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Document {doc_id} not found"},
+        )
+    return document
 
 
 # Type aliases for cleaner dependency injection

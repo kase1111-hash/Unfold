@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Brain, Plus, Download, Play, Loader2, AlertCircle } from "lucide-react";
+import { Brain, Plus, Play, Loader2, AlertCircle } from "lucide-react";
 import { FlashcardReview, StudyStats } from "@/components/learning";
 import { Button } from "@/components/ui";
-import { api } from "@/services/api";
+import { api, getErrorMessage } from "@/services/api";
 import toast from "react-hot-toast";
+import type { Document } from "@/types";
 
 interface Flashcard {
   card_id: string;
@@ -19,6 +20,7 @@ interface Flashcard {
 
 export default function FlashcardsPage() {
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -30,13 +32,15 @@ export default function FlashcardsPage() {
       const result = await api.getFlashcardsDue(50);
       const cards: Flashcard[] = result.due_cards.map((card) => ({
         card_id: card.card_id,
-        question: `Card ${card.card_id}`,
-        answer: "",
-        difficulty: card.easiness_factor > 2.5 ? "easy" : card.easiness_factor > 1.5 ? "intermediate" : "hard",
+        question: card.question,
+        answer: card.answer,
+        hint: card.hint ?? undefined,
+        type: card.card_type,
+        difficulty: card.difficulty,
       }));
       setFlashcards(cards);
-    } catch {
-      setError("Failed to load flashcards. Make sure the backend is running.");
+    } catch (err) {
+      setError(`Failed to load flashcards: ${getErrorMessage(err)}`);
     } finally {
       setIsLoading(false);
     }
@@ -52,16 +56,34 @@ export default function FlashcardsPage() {
       toast.success(
         `Next review in ${result.interval_days} day${result.interval_days !== 1 ? "s" : ""}`
       );
-    } catch {
-      toast.error("Failed to save review. Your progress may not be recorded.");
+    } catch (err) {
+      toast.error(`Failed to save review: ${getErrorMessage(err)}`);
     }
   }, []);
 
+  // The reviewer stays mounted to show its summary; reload when the user leaves it
   const handleReviewComplete = useCallback(
     (results: { card_id: string; quality: number; time_ms: number }[]) => {
-      setIsReviewing(false);
       const correctCount = results.filter((r) => r.quality >= 3).length;
       toast.success(`Session complete: ${correctCount}/${results.length} correct`);
+    },
+    []
+  );
+
+  const handleReviewExit = useCallback(() => {
+    setIsReviewing(false);
+    loadFlashcards();
+  }, [loadFlashcards]);
+
+  const handleCardsCreated = useCallback(
+    (count: number) => {
+      setIsCreating(false);
+      // Generating again stores only cards that do not exist yet
+      if (count > 0) {
+        toast.success(`Created ${count} new flashcard${count === 1 ? "" : "s"}`);
+      } else {
+        toast("Flashcards for this document already exist");
+      }
       loadFlashcards();
     },
     [loadFlashcards]
@@ -83,7 +105,7 @@ export default function FlashcardsPage() {
   if (error) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="flex flex-col items-center gap-3 text-center">
+        <div role="alert" className="flex flex-col items-center gap-3 text-center">
           <AlertCircle className="w-8 h-8 text-red-500" />
           <span className="text-red-500 font-medium">{error}</span>
           <Button variant="secondary" onClick={loadFlashcards}>
@@ -107,15 +129,22 @@ export default function FlashcardsPage() {
           </p>
         </div>
 
-        <div className="flex gap-2">
-          <Button variant="secondary" leftIcon={<Download className="w-4 h-4" />}>
-            Export
-          </Button>
-          <Button leftIcon={<Plus className="w-4 h-4" />}>
+        {!isReviewing && (
+          <Button
+            onClick={() => setIsCreating(true)}
+            leftIcon={<Plus className="w-4 h-4" />}
+          >
             Create Cards
           </Button>
-        </div>
+        )}
       </div>
+
+      {isCreating && (
+        <CreateCardsDialog
+          onCancel={() => setIsCreating(false)}
+          onCreated={handleCardsCreated}
+        />
+      )}
 
       {isReviewing ? (
         <div className="max-w-2xl mx-auto">
@@ -123,6 +152,7 @@ export default function FlashcardsPage() {
             flashcards={flashcards}
             onReview={handleReview}
             onComplete={handleReviewComplete}
+            onExit={handleReviewExit}
           />
         </div>
       ) : (
@@ -142,7 +172,7 @@ export default function FlashcardsPage() {
               <p className="text-slate-600 dark:text-slate-400 mb-6">
                 {flashcards.length > 0
                   ? `You have ${flashcards.length} card${flashcards.length !== 1 ? "s" : ""} ready for review. Regular reviews help strengthen your memory.`
-                  : "Upload a document and generate flashcards to start studying."}
+                  : "Use Create Cards to generate flashcards from one of your documents."}
               </p>
 
               {flashcards.length > 0 && (
@@ -196,6 +226,111 @@ export default function FlashcardsPage() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Picks one of the user's documents and generates flashcards from its stored text
+function CreateCardsDialog({
+  onCancel,
+  onCreated,
+}: {
+  onCancel: () => void;
+  onCreated: (count: number) => void;
+}) {
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [selectedDocId, setSelectedDocId] = useState("");
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [dialogError, setDialogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .getDocuments(1, 100)
+      .then((res) => {
+        setDocuments(res.data);
+        if (res.data.length > 0) setSelectedDocId(res.data[0].doc_id);
+      })
+      .catch((err) => setDialogError(getErrorMessage(err)))
+      .finally(() => setIsLoadingDocs(false));
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!selectedDocId) return;
+    setIsGenerating(true);
+    setDialogError(null);
+    try {
+      const result = await api.generateFlashcards(selectedDocId);
+      onCreated(result.count);
+    } catch (err) {
+      setDialogError(getErrorMessage(err));
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-labelledby="create-cards-title"
+      className="card p-6 max-w-xl space-y-4"
+    >
+      <h2
+        id="create-cards-title"
+        className="text-lg font-semibold text-slate-900 dark:text-white"
+      >
+        Generate flashcards from a document
+      </h2>
+
+      {isLoadingDocs ? (
+        <div className="flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          Loading documents...
+        </div>
+      ) : documents.length === 0 ? (
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Upload a document first, then generate flashcards from it.
+        </p>
+      ) : (
+        <div>
+          <label
+            htmlFor="create-cards-document"
+            className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5"
+          >
+            Document
+          </label>
+          <select
+            id="create-cards-document"
+            value={selectedDocId}
+            onChange={(e) => setSelectedDocId(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
+          >
+            {documents.map((doc) => (
+              <option key={doc.doc_id} value={doc.doc_id}>
+                {doc.title}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {dialogError && (
+        <p role="alert" className="text-sm text-red-600 dark:text-red-400">
+          {dialogError}
+        </p>
+      )}
+
+      <div className="flex justify-end gap-2">
+        <Button variant="secondary" onClick={onCancel} disabled={isGenerating}>
+          Cancel
+        </Button>
+        <Button
+          onClick={handleGenerate}
+          isLoading={isGenerating}
+          disabled={!selectedDocId}
+        >
+          Generate
+        </Button>
+      </div>
     </div>
   );
 }

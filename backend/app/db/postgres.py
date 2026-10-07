@@ -1,5 +1,6 @@
 """PostgreSQL database connection and session management."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -156,10 +157,13 @@ async def check_postgres_connection() -> dict[str, str | bool]:
             "message": "PostgreSQL connection successful",
         }
     except Exception as e:
+        # The exception text can name hosts, users or databases; log it
+        # rather than return it (health responses are unauthenticated).
+        logging.getLogger(__name__).warning("PostgreSQL health check failed: %s", e)
         return {
             "connected": False,
             "status": "error",
-            "message": str(e),
+            "message": "PostgreSQL connection failed",
         }
 
 

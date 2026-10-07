@@ -164,6 +164,63 @@ export interface PaginatedResponse<T> {
   };
 }
 
+// Raw shape of GET /documents/ (flat pagination fields; adapted by api.getDocuments)
+export interface DocumentListResponse {
+  status: string;
+  data: Document[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+// Result of POST /graph/documents/{doc_id}/build
+export interface GraphBuildResult {
+  doc_id: string;
+  nodes_created: number;
+  relations_created: number;
+  errors: string[];
+}
+
+// Flashcards (persisted per user)
+export type FlashcardDifficulty = "easy" | "medium" | "hard";
+
+export interface Flashcard {
+  card_id: string;
+  document_id: string;
+  question: string;
+  answer: string;
+  hint: string | null;
+  card_type: string;
+  difficulty: FlashcardDifficulty;
+  interval_days: number;
+  repetitions: number;
+  easiness_factor: number;
+  next_review: string;
+}
+
+export interface DueFlashcard extends Flashcard {
+  days_overdue: number;
+}
+
+export interface FlashcardReviewResult {
+  card_id: string;
+  quality: number;
+  next_review: string;
+  interval_days: number;
+  easiness_factor: number;
+  repetitions: number;
+}
+
+export interface StudyStatsData {
+  total_cards: number;
+  due_now: number;
+  due_today: number;
+  average_ef: number;
+  average_retention: number;
+  mature_cards: number;
+  learning_cards: number;
+}
+
 // Graph visualization types
 export interface GraphVisualizationNode extends GraphNode {
   x?: number;

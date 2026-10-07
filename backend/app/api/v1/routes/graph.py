@@ -1,18 +1,45 @@
-"""Knowledge graph API endpoints."""
+"""Knowledge graph API endpoints.
+
+Every route requires a bearer token. Graph data is scoped to the caller's
+documents: a node or document that belongs to someone else is reported as
+not found (404), exactly like a missing one. When Neo4j can't be reached
+the driver's connectivity errors propagate and main.py turns them into
+503 GRAPH_UNAVAILABLE.
+"""
+
+import asyncio
+import logging
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import CurrentUser
+from app.api.v1.dependencies import CurrentUser, DBSession, get_owned_document
+from app.db import GRAPH_UNAVAILABLE_ERRORS
+from app.db.models.document import DocumentORM
+from app.models.document import DocumentStatus
 from app.models.graph import (
+    FlatMetadata,
     GraphNode,
     GraphNodeCreate,
     GraphRelation,
     NodeType,
     RelationType,
 )
+from app.models.user import User
+from app.repositories.document import DocumentRepository
 from app.services.graph import get_graph_builder, get_embedding_service
+from app.services.graph.document_graph import (
+    BuildInProgressError,
+    build_document_graph,
+    exclusive_build,
+    mark_build_failed,
+    save_build_result,
+)
 from app.services.external import get_wikipedia_linker, get_semantic_scholar_linker
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -38,6 +65,15 @@ class BuildGraphResponse(BaseModel):
     errors: list[str]
 
 
+class DocumentGraphBuildResponse(BaseModel):
+    """Response from (re)building a stored document's graph."""
+
+    doc_id: str
+    nodes_created: int
+    relations_created: int
+    errors: list[str]
+
+
 class CreateNodeRequest(GraphNodeCreate):
     """Request to create a single node."""
 
@@ -47,11 +83,13 @@ class CreateNodeRequest(GraphNodeCreate):
 class CreateRelationRequest(BaseModel):
     """Request to create a relation."""
 
-    source_node_id: str = Field(..., description="Source node element ID")
-    target_node_id: str = Field(..., description="Target node element ID")
+    source_node_id: str = Field(..., description="Source node ID (node_id)")
+    target_node_id: str = Field(..., description="Target node ID (node_id)")
     relation_type: RelationType = Field(..., description="Type of relation")
     weight: float = Field(1.0, ge=0.0, le=1.0, description="Relation strength")
-    metadata: dict | None = Field(None, description="Optional metadata")
+    metadata: FlatMetadata = Field(
+        None, description="Optional metadata: a flat object of primitives"
+    )
 
 
 class NodeListResponse(BaseModel):
@@ -83,6 +121,28 @@ class PaperSearchResponse(BaseModel):
     url: str | None
 
 
+# Ownership helpers
+async def _owned_doc_ids(db: AsyncSession, user: User) -> set[str]:
+    """IDs of the documents ``user`` owns; graph nodes are scoped by these."""
+    result = await db.execute(
+        select(DocumentORM.doc_id).where(DocumentORM.owner_id == user.user_id)
+    )
+    return set(result.scalars().all())
+
+
+async def _get_owned_node(node_id: str, owned_doc_ids: set[str]) -> GraphNode:
+    """Load a node from one of the caller's documents, or raise 404."""
+    node = await get_graph_builder().get_node(node_id)
+
+    if node is None or node.source_doc_id not in owned_doc_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NODE_NOT_FOUND", "message": f"Node {node_id} not found"},
+        )
+
+    return node
+
+
 # Endpoints
 @router.post(
     "/build",
@@ -93,12 +153,15 @@ class PaperSearchResponse(BaseModel):
 async def build_graph(
     request: BuildGraphRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ) -> BuildGraphResponse:
     """Build a knowledge graph from source text.
 
     Extracts entities, relations, and optionally generates embeddings.
-    Requires authentication.
+    The source document must belong to the caller.
     """
+    await get_owned_document(db, request.source_doc_id, current_user)
+
     builder = get_graph_builder()
 
     # Generate embeddings if requested
@@ -106,16 +169,18 @@ async def build_graph(
     if request.generate_embeddings:
         try:
             embedding_service = get_embedding_service(use_openai=True)
-            # Extract entities first to get texts for embedding
-            extractor = builder.entity_extractor
-            entities = extractor.extract_entities(request.text)
+            # Extract entities first to get texts for embedding (spaCy is
+            # CPU-bound, so keep it off the event loop)
+            entities = await asyncio.to_thread(
+                builder.entity_extractor.extract_entities, request.text
+            )
             entity_texts = [e.text for e in entities]
 
             if entity_texts:
                 embeddings = await embedding_service.embed_texts(entity_texts)
         except Exception as e:
             # Continue without embeddings if service unavailable
-            print(f"Embedding generation failed: {e}")
+            logger.warning(f"Embedding generation failed: {e}")
 
     result = await builder.build_from_text(
         text=request.text,
@@ -133,6 +198,76 @@ async def build_graph(
 
 
 @router.post(
+    "/documents/{doc_id}/build",
+    response_model=DocumentGraphBuildResponse,
+    summary="(Re)build the knowledge graph for a stored document",
+)
+async def build_graph_for_document(
+    doc_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> DocumentGraphBuildResponse:
+    """Rebuild a document's graph from its stored text.
+
+    Existing nodes for the document are replaced, so this is safe to call
+    again. The document is PROCESSING during the build, then INDEXED when
+    nodes were created (VALIDATED otherwise, or if the build fails). Answers
+    409 BUILD_IN_PROGRESS while another build of the document is running.
+    """
+    await get_owned_document(db, doc_id, current_user)
+
+    repo = DocumentRepository(db)
+    content = await repo.get_content(doc_id, owner_id=current_user.user_id)
+    if not content or not content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "NO_CONTENT",
+                "message": "Document has no extracted text to build a graph from",
+            },
+        )
+
+    try:
+        async with exclusive_build(doc_id):
+            await repo.update_status(doc_id, DocumentStatus.PROCESSING)
+            # End the transaction (and return the connection) before the
+            # build, which can outlast PostgreSQL's idle-in-transaction limit
+            await db.commit()
+
+            try:
+                result = await build_document_graph(doc_id, content)
+                # The rebuild replaced every node, so replace the stored IDs too
+                saved = await save_build_result(repo, doc_id, result)
+            except BaseException:
+                # Release any row lock first: the reset uses its own session
+                await db.rollback()
+                await mark_build_failed(doc_id)
+                raise
+    except BuildInProgressError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "BUILD_IN_PROGRESS",
+                "message": "The knowledge graph for this document is already being built",
+            },
+        )
+
+    if not saved:
+        # The document was deleted while it was being built
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"code": "NOT_FOUND", "message": f"Document {doc_id} not found"},
+        )
+
+    return DocumentGraphBuildResponse(
+        doc_id=doc_id,
+        nodes_created=result.nodes_created,
+        relations_created=result.relations_created,
+        errors=result.errors,
+    )
+
+
+@router.post(
     "/nodes",
     response_model=GraphNode,
     status_code=status.HTTP_201_CREATED,
@@ -141,20 +276,27 @@ async def build_graph(
 async def create_node(
     request: CreateNodeRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ) -> GraphNode:
     """Create a single node in the knowledge graph.
 
-    Requires authentication.
+    The node's source document must belong to the caller.
     """
+    await get_owned_document(db, request.source_doc_id, current_user)
+
     builder = get_graph_builder()
 
     try:
         node = await builder.add_node(request)
         return node
-    except Exception as e:
+    except GRAPH_UNAVAILABLE_ERRORS:
+        raise
+    except Exception:
+        # The driver's error text stays in the log, not in the response
+        logger.exception("Failed to create graph node")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "NODE_CREATION_FAILED", "message": str(e)},
+            detail={"code": "NODE_CREATION_FAILED", "message": "Failed to create the node"},
         )
 
 
@@ -167,11 +309,16 @@ async def create_node(
 async def create_relation(
     request: CreateRelationRequest,
     current_user: CurrentUser,
+    db: DBSession,
 ) -> GraphRelation:
     """Create a relation between two existing nodes.
 
-    Requires authentication.
+    Both nodes must come from the caller's documents.
     """
+    owned_doc_ids = await _owned_doc_ids(db, current_user)
+    await _get_owned_node(request.source_node_id, owned_doc_ids)
+    await _get_owned_node(request.target_node_id, owned_doc_ids)
+
     builder = get_graph_builder()
 
     try:
@@ -183,15 +330,23 @@ async def create_relation(
             metadata=request.metadata,
         )
         return relation
-    except ValueError as e:
+    except ValueError:
+        # create_relationship matched no node pair
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NODE_NOT_FOUND", "message": str(e)},
+            detail={"code": "NODE_NOT_FOUND", "message": "Source or target node not found"},
         )
-    except Exception as e:
+    except GRAPH_UNAVAILABLE_ERRORS:
+        raise
+    except Exception:
+        # The driver's error text stays in the log, not in the response
+        logger.exception("Failed to create graph relation")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "RELATION_CREATION_FAILED", "message": str(e)},
+            detail={
+                "code": "RELATION_CREATION_FAILED",
+                "message": "Failed to create the relation",
+            },
         )
 
 
@@ -200,19 +355,13 @@ async def create_relation(
     response_model=GraphNode,
     summary="Get node by ID",
 )
-async def get_node(node_id: str) -> GraphNode:
-    """Get a node by its element ID."""
-    builder = get_graph_builder()
-
-    node = await builder.get_node(node_id)
-
-    if node is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"code": "NODE_NOT_FOUND", "message": f"Node {node_id} not found"},
-        )
-
-    return node
+async def get_node(
+    node_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+) -> GraphNode:
+    """Get a node by its node_id (as returned by the list endpoints)."""
+    return await _get_owned_node(node_id, await _owned_doc_ids(db, current_user))
 
 
 @router.get(
@@ -221,29 +370,35 @@ async def get_node(node_id: str) -> GraphNode:
     summary="Search nodes",
 )
 async def search_nodes(
+    current_user: CurrentUser,
+    db: DBSession,
     query: str | None = Query(None, description="Text query to match labels"),
     node_type: NodeType | None = Query(None, description="Filter by node type"),
     source_doc_id: str | None = Query(None, description="Filter by source document"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
 ) -> NodeListResponse:
-    """Search for nodes in the knowledge graph."""
+    """Search for nodes in the caller's documents, most connected first
+    (then by label and node_id), so a limited result keeps the hubs and is
+    always the same subset. ``total`` counts every match, so callers can tell
+    when the result was cut off."""
     builder = get_graph_builder()
 
-    try:
-        nodes = await builder.search_nodes(
-            query=query,
-            node_type=node_type,
-            source_doc_id=source_doc_id,
-            limit=limit,
-        )
-    except Exception:
-        # Neo4j unavailable — return empty results instead of 500
-        nodes = []
+    if source_doc_id:
+        await get_owned_document(db, source_doc_id, current_user)
+        scope = {"source_doc_id": source_doc_id}
+    else:
+        scope = {"source_doc_ids": sorted(await _owned_doc_ids(db, current_user))}
 
-    return NodeListResponse(
-        nodes=nodes,
-        total=len(nodes),
+    nodes = await builder.search_nodes(
+        query=query, node_type=node_type, limit=limit, **scope
     )
+    total = (
+        len(nodes)
+        if len(nodes) < limit
+        else await builder.count_nodes(query=query, node_type=node_type, **scope)
+    )
+
+    return NodeListResponse(nodes=nodes, total=total)
 
 
 @router.get(
@@ -253,6 +408,8 @@ async def search_nodes(
 )
 async def get_related_nodes(
     node_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
     relation_types: list[RelationType] | None = Query(
         None, description="Filter by relation types"
     ),
@@ -260,6 +417,9 @@ async def get_related_nodes(
     limit: int = Query(50, ge=1, le=200, description="Maximum results"),
 ) -> NodeListResponse:
     """Get nodes related to a given node through graph traversal."""
+    owned_doc_ids = await _owned_doc_ids(db, current_user)
+    await _get_owned_node(node_id, owned_doc_ids)
+
     builder = get_graph_builder()
 
     nodes = await builder.get_related_nodes(
@@ -268,6 +428,7 @@ async def get_related_nodes(
         max_depth=max_depth,
         limit=limit,
     )
+    nodes = [n for n in nodes if n.source_doc_id in owned_doc_ids]
 
     return NodeListResponse(
         nodes=nodes,
@@ -281,9 +442,13 @@ async def get_related_nodes(
 )
 async def get_document_relations(
     doc_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
     limit: int = Query(500, ge=1, le=1000, description="Maximum relations"),
 ) -> dict:
     """Get all relations between nodes belonging to a document."""
+    await get_owned_document(db, doc_id, current_user)
+
     builder = get_graph_builder()
 
     relations = await builder.get_document_relations(doc_id=doc_id, limit=limit)
@@ -311,11 +476,14 @@ async def get_document_relations(
 async def delete_document_nodes(
     doc_id: str,
     current_user: CurrentUser,
+    db: DBSession,
 ) -> dict:
     """Delete all knowledge graph nodes associated with a document.
 
-    Requires authentication.
+    The document must belong to the caller.
     """
+    await get_owned_document(db, doc_id, current_user)
+
     builder = get_graph_builder()
 
     deleted = await builder.delete_document_nodes(doc_id)
@@ -329,11 +497,15 @@ async def delete_document_nodes(
 
 # External linking endpoints
 @router.get(
-    "/link/wikipedia/{entity}",
+    # :path so labels containing "/" (e.g. "TCP/IP") still match
+    "/link/wikipedia/{entity:path}",
     response_model=WikipediaLinkResponse,
     summary="Link entity to Wikipedia",
 )
-async def link_to_wikipedia(entity: str) -> WikipediaLinkResponse:
+async def link_to_wikipedia(
+    entity: str,
+    current_user: CurrentUser,
+) -> WikipediaLinkResponse:
     """Find the best matching Wikipedia article for an entity."""
     linker = get_wikipedia_linker()
 
@@ -363,6 +535,7 @@ async def link_to_wikipedia(entity: str) -> WikipediaLinkResponse:
     summary="Search academic papers",
 )
 async def search_papers(
+    current_user: CurrentUser,
     query: str = Query(..., min_length=2, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Maximum results"),
 ) -> list[PaperSearchResponse]:
@@ -386,11 +559,15 @@ async def search_papers(
 
 
 @router.get(
-    "/link/papers/{paper_id}",
+    # :path so DOI-style IDs ("DOI:10.1000/xyz") still match
+    "/link/papers/{paper_id:path}",
     response_model=PaperSearchResponse,
     summary="Get paper by ID",
 )
-async def get_paper(paper_id: str) -> PaperSearchResponse:
+async def get_paper(
+    paper_id: str,
+    current_user: CurrentUser,
+) -> PaperSearchResponse:
     """Get paper details from Semantic Scholar.
 
     Supports Semantic Scholar IDs, DOI (DOI:xxx), or arXiv IDs (ARXIV:xxx).

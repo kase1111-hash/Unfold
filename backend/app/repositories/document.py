@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models.document import DocumentORM, DocumentValidationORM
 from app.models.document import (
     Document,
-    DocumentCreate,
     DocumentLicense,
     DocumentSource,
     DocumentStatus,
@@ -33,17 +32,24 @@ class DocumentRepository:
         self.session = session
 
     @staticmethod
-    def generate_doc_id(content: bytes) -> str:
-        """Generate document ID from content hash.
+    def generate_doc_id(content: bytes, owner_id: str | None = None) -> str:
+        """Generate document ID from the owner and the content hash.
+
+        The owner is part of the hash so document IDs are per user: two
+        users uploading the same file each get their own document.
 
         Args:
             content: Document file content
+            owner_id: Owner user ID
 
         Returns:
-            SHA-256 hash prefixed with 'sha256:'
+            SHA-256 hash of owner_id + NUL + content, prefixed with 'sha256:'
         """
-        hash_value = hashlib.sha256(content).hexdigest()
-        return f"sha256:{hash_value}"
+        digest = hashlib.sha256()
+        if owner_id is not None:
+            digest.update(owner_id.encode() + b"\0")
+        digest.update(content)
+        return f"sha256:{digest.hexdigest()}"
 
     async def create(
         self,
@@ -100,18 +106,23 @@ class DocumentRepository:
         logger.info(f"Created document: {doc_id}")
         return self._to_model(doc_orm)
 
-    async def get_by_id(self, doc_id: str) -> Document | None:
+    async def get_by_id(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> Document | None:
         """Get document by ID.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return the document when it belongs
+                to this user
 
         Returns:
             Document if found, None otherwise
         """
-        result = await self.session.execute(
-            select(DocumentORM).where(DocumentORM.doc_id == doc_id)
-        )
+        query = select(DocumentORM).where(DocumentORM.doc_id == doc_id)
+        if owner_id is not None:
+            query = query.where(DocumentORM.owner_id == owner_id)
+        result = await self.session.execute(query)
         doc_orm = result.scalar_one_or_none()
 
         if doc_orm is None:
@@ -227,6 +238,21 @@ class DocumentRepository:
         )
         return await self.get_by_id(doc_id)
 
+    async def reset_status(
+        self, from_status: DocumentStatus, to_status: DocumentStatus
+    ) -> int:
+        """Move every document in ``from_status`` to ``to_status``.
+
+        Returns:
+            Number of documents updated
+        """
+        result = await self.session.execute(
+            update(DocumentORM)
+            .where(DocumentORM.status == from_status)
+            .values(status=to_status, updated_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount
+
     async def update_content(
         self,
         doc_id: str,
@@ -283,6 +309,23 @@ class DocumentRepository:
         )
         return True
 
+    async def set_graph_nodes(self, doc_id: str, node_ids: list[str]) -> bool:
+        """Replace the document's graph node IDs (after a full rebuild).
+
+        Args:
+            doc_id: Document identifier
+            node_ids: The complete list of the document's graph node IDs
+
+        Returns:
+            True if updated, False if document not found
+        """
+        result = await self.session.execute(
+            update(DocumentORM)
+            .where(DocumentORM.doc_id == doc_id)
+            .values(graph_nodes=list(node_ids), updated_at=datetime.now(timezone.utc))
+        )
+        return result.rowcount > 0
+
     async def delete(self, doc_id: str) -> bool:
         """Delete a document.
 
@@ -314,18 +357,23 @@ class DocumentRepository:
         )
         return result.scalar_one_or_none() is not None
 
-    async def get_content(self, doc_id: str) -> str | None:
+    async def get_content(
+        self, doc_id: str, owner_id: str | None = None
+    ) -> str | None:
         """Get document text content.
 
         Args:
             doc_id: Document identifier
+            owner_id: If given, only return content when the document
+                belongs to this user
 
         Returns:
             Text content if found, None otherwise
         """
-        result = await self.session.execute(
-            select(DocumentORM.content).where(DocumentORM.doc_id == doc_id)
-        )
+        query = select(DocumentORM.content).where(DocumentORM.doc_id == doc_id)
+        if owner_id is not None:
+            query = query.where(DocumentORM.owner_id == owner_id)
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     # Validation methods

@@ -382,7 +382,8 @@ class ZoteroExporter:
             title=data.get("title", ""),
             authors=authors,
             abstract=data.get("abstract"),
-            date=data.get("date") or data.get("year"),
+            # str(): clients often send the year as a number (2020).
+            date=str(data.get("date") or data.get("year") or "") or None,
             doi=data.get("doi"),
             url=data.get("url"),
             journal=data.get("journal") or data.get("venue"),

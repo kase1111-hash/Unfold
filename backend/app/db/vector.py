@@ -17,6 +17,9 @@ settings = get_settings()
 _faiss_index: Any = None
 _faiss_id_map: dict[str, int] = {}
 _faiss_metadata: dict[str, dict] = {}
+# FAISS (IndexFlatL2) cannot remove vectors, so deleted ids are tracked here
+# and skipped by faiss_search.
+_faiss_deleted: set[str] = set()
 _faiss_dimension: int = 3072  # text-embedding-3-large dimension
 
 
@@ -27,7 +30,8 @@ async def init_faiss(dimension: int = 3072, index_path: str | None = None) -> No
         dimension: Embedding dimension (3072 for text-embedding-3-large)
         index_path: Optional path to load existing index
     """
-    global _faiss_index, _faiss_id_map, _faiss_metadata, _faiss_dimension
+    global _faiss_index, _faiss_id_map, _faiss_metadata, _faiss_deleted
+    global _faiss_dimension
 
     try:
         import faiss
@@ -45,6 +49,7 @@ async def init_faiss(dimension: int = 3072, index_path: str | None = None) -> No
                 data = json.load(f)
                 _faiss_id_map = data.get("id_map", {})
                 _faiss_metadata = data.get("metadata", {})
+                _faiss_deleted = set(data.get("deleted", []))
     else:
         # Create new index with L2 distance
         _faiss_index = faiss.IndexFlatL2(dimension)
@@ -52,10 +57,11 @@ async def init_faiss(dimension: int = 3072, index_path: str | None = None) -> No
 
 async def close_faiss() -> None:
     """Close FAISS index."""
-    global _faiss_index, _faiss_id_map, _faiss_metadata
+    global _faiss_index, _faiss_id_map, _faiss_metadata, _faiss_deleted
     _faiss_index = None
     _faiss_id_map = {}
     _faiss_metadata = {}
+    _faiss_deleted = set()
 
 
 async def save_faiss_index(index_path: str) -> None:
@@ -80,7 +86,14 @@ async def save_faiss_index(index_path: str) -> None:
     # Save metadata
     metadata_path = Path(index_path).with_suffix(".json")
     with open(metadata_path, "w") as f:
-        json.dump({"id_map": _faiss_id_map, "metadata": _faiss_metadata}, f)
+        json.dump(
+            {
+                "id_map": _faiss_id_map,
+                "metadata": _faiss_metadata,
+                "deleted": sorted(_faiss_deleted),
+            },
+            f,
+        )
 
 
 async def faiss_add_vectors(
@@ -111,8 +124,10 @@ async def faiss_add_vectors(
     # Update mappings
     for i, vec_id in enumerate(ids):
         _faiss_id_map[vec_id] = start_idx + i
+        _faiss_deleted.discard(vec_id)
         if metadata:
-            _faiss_metadata[vec_id] = metadata[i]
+            # Copy: callers may pass one dict object for several ids.
+            _faiss_metadata[vec_id] = dict(metadata[i])
 
 
 async def faiss_search(
@@ -137,8 +152,11 @@ async def faiss_search(
 
     query_np = np.array([query_vector], dtype=np.float32)
 
-    # Search with extra results for post-filtering
-    search_k = k * 3 if filter_metadata else k
+    # Search with extra results for post-filtering, and to get past entries
+    # that are still in the index but skipped below: deleted ids, and stale
+    # positions left behind when an id was added again.
+    hidden = len(_faiss_deleted) + (_faiss_index.ntotal - len(_faiss_id_map))
+    search_k = (k * 3 if filter_metadata else k) + hidden
     distances, indices = _faiss_index.search(
         query_np, min(search_k, _faiss_index.ntotal)
     )
@@ -152,7 +170,7 @@ async def faiss_search(
             continue
 
         vec_id = idx_to_id.get(idx)
-        if vec_id is None:
+        if vec_id is None or vec_id in _faiss_deleted:
             continue
 
         metadata = _faiss_metadata.get(vec_id, {})
@@ -179,7 +197,8 @@ async def faiss_search(
 async def faiss_delete(ids: list[str]) -> int:
     """Delete vectors from FAISS index.
 
-    Note: FAISS doesn't support true deletion. We mark as deleted in metadata.
+    Note: FAISS doesn't support true deletion. Deleted ids are recorded and
+    excluded from faiss_search.
 
     Args:
         ids: List of vector IDs to delete
@@ -187,12 +206,10 @@ async def faiss_delete(ids: list[str]) -> int:
     Returns:
         Number of vectors marked as deleted
     """
-    global _faiss_metadata
-
     deleted = 0
     for vec_id in ids:
-        if vec_id in _faiss_metadata:
-            _faiss_metadata[vec_id]["_deleted"] = True
+        if vec_id in _faiss_id_map and vec_id not in _faiss_deleted:
+            _faiss_deleted.add(vec_id)
             deleted += 1
 
     return deleted

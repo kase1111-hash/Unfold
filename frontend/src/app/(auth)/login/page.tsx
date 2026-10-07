@@ -91,7 +91,7 @@ export default function LoginPage() {
           autoComplete="current-password"
         />
 
-        <div className="flex items-center justify-between text-sm">
+        <div className="flex items-center text-sm">
           <label className="flex items-center">
             <input
               type="checkbox"
@@ -101,12 +101,6 @@ export default function LoginPage() {
               Remember me
             </span>
           </label>
-          <Link
-            href="/forgot-password"
-            className="text-primary-600 hover:text-primary-700"
-          >
-            Forgot password?
-          </Link>
         </div>
 
         <Button

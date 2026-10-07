@@ -6,6 +6,7 @@ Generates Q&A pairs for spaced repetition learning.
 import json
 import logging
 import re
+import uuid
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from enum import Enum
@@ -13,8 +14,47 @@ from enum import Enum
 import httpx
 
 from app.config import settings
+from app.models.learning import FlashcardDifficulty
 
 logger = logging.getLogger(__name__)
+
+# Whole documents are passed in; keep the prompt well inside the model's context
+MAX_PROMPT_TEXT_CHARS = 48_000
+
+# Longer "sentences" are usually extraction noise (tables, missing punctuation)
+MAX_FALLBACK_SENTENCE_CHARS = 500
+
+# Capitalized words that open sentences but make useless answers ("She", "The")
+NON_ANSWER_WORDS = frozenset(
+    {
+        "A", "An", "The", "This", "That", "These", "Those",
+        "I", "He", "She", "It", "We", "They", "You",
+        "My", "His", "Her", "Its", "Our", "Their", "Your",
+        "In", "On", "At", "By", "For", "From", "With", "As", "Of", "To",
+        "After", "Before", "During", "When", "While", "Since", "Although",
+        "However", "Then", "There", "Here", "But", "And", "Or", "If",
+    }
+)
+
+# Generator difficulty labels -> stored flashcard difficulty
+DIFFICULTY_LEVELS = {
+    "beginner": FlashcardDifficulty.EASY,
+    "intermediate": FlashcardDifficulty.MEDIUM,
+    "advanced": FlashcardDifficulty.HARD,
+}
+
+
+def to_card_difficulty(level: object) -> FlashcardDifficulty:
+    """Map a generator difficulty (beginner/intermediate/advanced) to easy/medium/hard."""
+    if isinstance(level, str):
+        level = level.strip().lower()
+        if level in DIFFICULTY_LEVELS:
+            return DIFFICULTY_LEVELS[level]
+        try:
+            return FlashcardDifficulty(level)
+        except ValueError:
+            pass
+    return FlashcardDifficulty.MEDIUM
 
 
 class QuestionType(str, Enum):
@@ -96,7 +136,7 @@ class FlashcardGenerator:
         prompt = f"""Generate {num_cards} high-quality flashcards from the following text for spaced repetition learning.
 
 Text:
-{text}
+{text[:MAX_PROMPT_TEXT_CHARS]}
 
 {f'Context: {context}' if context else ''}
 
@@ -146,10 +186,13 @@ Return ONLY the JSON array, no additional text."""
 
             # Parse JSON from response
             flashcards = self._parse_flashcards_json(content)
+            if not flashcards:
+                logger.warning("LLM returned no parseable flashcards")
+                return self._generate_fallback_flashcards(text, num_cards)
 
             # Add metadata
-            for i, card in enumerate(flashcards):
-                card["card_id"] = f"fc_{i}_{hash(text[:100]) % 10000}"
+            for card in flashcards:
+                card["card_id"] = str(uuid.uuid4())
                 card["source_hash"] = hash(text) % 1000000
 
             return flashcards
@@ -200,15 +243,31 @@ Return ONLY the JSON array, no additional text."""
         Generate basic flashcards without LLM using rule-based extraction.
         """
         flashcards = []
+        # PDF text keeps hard line wraps; collapse them so terms aren't split
+        text = re.sub(r"\s+", " ", text)
         sentences = re.split(r"[.!?]+", text)
-        sentences = [s.strip() for s in sentences if len(s.strip()) > 30]
+        sentences = [
+            s.strip()
+            for s in sentences
+            if 30 < len(s.strip()) <= MAX_FALLBACK_SENTENCE_CHARS
+        ]
 
-        for i, sentence in enumerate(sentences[:num_cards]):
+        for sentence in sentences[:num_cards]:
             # Extract key terms (capitalized words, quoted terms)
-            key_terms = re.findall(
+            matches = re.findall(
                 r'"([^"]+)"|([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)', sentence
             )
-            key_terms = [t[0] or t[1] for t in key_terms if t[0] or t[1]]
+            key_terms = []
+            for quoted, capitalized in matches:
+                if quoted:
+                    key_terms.append(quoted)
+                    continue
+                # Drop leading pronouns/articles: "She" -> skip, "The Moon" -> "Moon"
+                words = capitalized.split()
+                while words and words[0] in NON_ANSWER_WORDS:
+                    words.pop(0)
+                if words:
+                    key_terms.append(" ".join(words))
 
             # Create a fill-in-the-blank style question
             if key_terms:
@@ -224,7 +283,7 @@ Return ONLY the JSON array, no additional text."""
 
             flashcards.append(
                 {
-                    "card_id": f"fc_fallback_{i}",
+                    "card_id": str(uuid.uuid4()),
                     "question": question,
                     "answer": answer,
                     "type": q_type.value,

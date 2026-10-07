@@ -8,15 +8,18 @@ The integrated pipeline uses Ollama as the default LLM provider for local/offlin
 operation, with fallback to cloud APIs when configured.
 """
 
+import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.db.neo4j import (
+    GRAPH_UNAVAILABLE_ERRORS,
+    count_nodes,
     create_node,
     create_relationship,
-    delete_node,
     get_neo4j_session_context,
     get_node_by_id,
     search_nodes,
@@ -33,6 +36,78 @@ from app.services.graph.extractor import get_entity_extractor
 from app.services.graph.relations import get_relation_extractor
 
 logger = logging.getLogger(__name__)
+
+# Node properties that are set by the builder and must not be overridden by
+# caller-supplied metadata.
+_NODE_FIELDS = {
+    "node_id",
+    "label",
+    "type",
+    "description",
+    "source_doc_id",
+    "embedding",
+    "confidence",
+    "external_links",
+}
+
+
+# Entities whose label is longer than this are run-on text (table rows and
+# the like), not concepts; they are not stored.
+MAX_ENTITY_LABEL_CHARS = 300
+# GraphNode.label's limit; longer labels stored earlier are cut to it on read.
+MAX_NODE_LABEL_CHARS = 500
+
+
+def _new_node_id() -> str:
+    return f"node_{uuid4().hex}"
+
+
+def _new_relation_id() -> str:
+    return f"rel_{uuid4().hex}"
+
+
+def _normalize_label(text: str) -> str:
+    """Collapse whitespace (including PDF line breaks) inside an entity label."""
+    return " ".join(text.split())
+
+
+def _clamp_unit(value: float | None, default: float = 1.0) -> float:
+    """Coerce a confidence/weight value into the 0..1 range."""
+    try:
+        number = float(value) if value is not None else default
+    except (TypeError, ValueError):
+        number = default
+    return max(0.0, min(1.0, number))
+
+
+def _search_properties(
+    source_doc_id: str | None, source_doc_ids: list[str] | None
+) -> dict | None:
+    """Property filter for node search: one document, any of several, or none."""
+    if source_doc_id:
+        return {"source_doc_id": source_doc_id}
+    if source_doc_ids is not None:
+        return {"source_doc_id": list(source_doc_ids)}
+    return None
+
+
+def _node_from_properties(props: dict) -> GraphNode:
+    """Build a GraphNode from stored Neo4j node properties."""
+    try:
+        node_type = NodeType(props.get("type", "Concept"))
+    except ValueError:
+        node_type = NodeType.CONCEPT
+
+    return GraphNode(
+        node_id=props.get("node_id", ""),
+        label=(props.get("label") or "")[:MAX_NODE_LABEL_CHARS],
+        type=node_type,
+        description=props.get("description"),
+        source_doc_id=props.get("source_doc_id", ""),
+        embedding=props.get("embedding"),
+        confidence=_clamp_unit(props.get("confidence")),
+        external_links=props.get("external_links", {}),
+    )
 
 
 @dataclass
@@ -80,6 +155,7 @@ class KnowledgeGraphBuilder:
         source_doc_id: str,
         extract_relations: bool = True,
         embeddings: list[list[float]] | None = None,
+        known_nodes: dict[str, str] | None = None,
     ) -> GraphBuildResult:
         """Build knowledge graph from text.
 
@@ -88,9 +164,17 @@ class KnowledgeGraphBuilder:
             source_doc_id: ID of source document
             extract_relations: Whether to extract relations between entities
             embeddings: Optional pre-computed embeddings for entities
+            known_nodes: Optional map of lowercased label -> node_id shared
+                across calls (one per document build). Entities already in
+                it are not created again, relations may link to them, and
+                the nodes created here are added to it.
 
         Returns:
-            GraphBuildResult with statistics and IDs
+            GraphBuildResult with statistics and IDs (node_ids are the
+            nodes' node_id property, the public node identifier)
+
+        Raises:
+            GRAPH_UNAVAILABLE_ERRORS: If Neo4j cannot be reached
         """
         result = GraphBuildResult(
             nodes_created=0,
@@ -100,20 +184,36 @@ class KnowledgeGraphBuilder:
             errors=[],
         )
 
-        # Step 1: Extract entities
-        entities = self.entity_extractor.extract_entities(text)
+        # Step 1: Extract entities (spaCy is CPU-bound; keep it off the loop)
+        entities = await asyncio.to_thread(self.entity_extractor.extract_entities, text)
 
         if not entities:
             result.errors.append("No entities extracted from text")
             return result
 
-        # Step 2: Create nodes in Neo4j
-        entity_to_node_id: dict[str, str] = {}
+        # Step 2: Create nodes in Neo4j. entity_to_node_id maps the
+        # normalized, lowercased label to the node_id property, which is what
+        # create_relationship matches on in step 3. text_keys lists the keys
+        # of this text's own entities, in order.
+        entity_to_node_id: dict[str, str] = (
+            known_nodes if known_nodes is not None else {}
+        )
+        text_keys: list[str] = []
 
         async with get_neo4j_session_context() as session:
             for i, entity in enumerate(entities):
+                label = _normalize_label(entity.text)
+                key = label.lower()
+                if not label or len(label) > MAX_ENTITY_LABEL_CHARS:
+                    continue
+                if key in entity_to_node_id:
+                    # Labels that only differed by line breaks collapse here,
+                    # as do entities already created from an earlier chunk
+                    if key not in text_keys:
+                        text_keys.append(key)
+                    continue
                 try:
-                    node_id = f"node_{uuid4().hex[:12]}"
+                    node_id = _new_node_id()
 
                     # Get embedding if available
                     embedding = None
@@ -124,77 +224,74 @@ class KnowledgeGraphBuilder:
                         session,
                         node_type=entity.to_node_type().value,
                         properties={
+                            **(entity.metadata or {}),
                             "node_id": node_id,
-                            "label": entity.text,
+                            "label": label,
                             "type": entity.to_node_type().value,
                             "source_doc_id": source_doc_id,
                             "confidence": entity.confidence,
                             "created_at": datetime.now(timezone.utc).isoformat(),
                             **({"embedding": embedding} if embedding else {}),
-                            **(entity.metadata or {}),
                         },
                     )
 
-                    entity_to_node_id[entity.text.lower()] = node_data["id"]
-                    result.node_ids.append(node_data["id"])
+                    if node_data is None:
+                        result.errors.append(
+                            f"Failed to create node for '{label}': graph database not available"
+                        )
+                        continue
+
+                    entity_to_node_id[key] = node_id
+                    text_keys.append(key)
+                    result.node_ids.append(node_id)
                     result.nodes_created += 1
 
+                except GRAPH_UNAVAILABLE_ERRORS:
+                    raise
                 except Exception as e:
-                    result.errors.append(
-                        f"Failed to create node for '{entity.text}': {e}"
-                    )
+                    result.errors.append(f"Failed to create node for '{label}': {e}")
 
         # Step 3: Extract and create relations
         if extract_relations and len(entities) >= 2:
             try:
-                import asyncio
-
-                if self.use_llm_relations and not self.use_integrated:
-                    # LLM-only extractor is natively async
-                    relations = await self.relation_extractor.extract_relations(
-                        text, entities
-                    )
+                # Dispatch on the extractor actually in use (get_relation_extractor
+                # may fall back to a different one than the config flags suggest):
+                # await coroutine functions, run synchronous ones in a thread.
+                extract = self.relation_extractor.extract_relations
+                if inspect.iscoroutinefunction(extract):
+                    relations = await extract(text, entities)
                 else:
-                    # Integrated and rule-based extractors are synchronous —
-                    # run in a thread to avoid blocking the event loop
-                    relations = await asyncio.to_thread(
-                        self.relation_extractor.extract_relations,
-                        text,
-                        entities,
-                    )
+                    relations = await asyncio.to_thread(extract, text, entities)
 
                 logger.info(f"Extracted {len(relations)} relations from text")
 
                 async with get_neo4j_session_context() as session:
                     for relation in relations:
                         try:
-                            source_id = entity_to_node_id.get(
-                                relation.source_text.lower()
-                            )
-                            target_id = entity_to_node_id.get(
-                                relation.target_text.lower()
-                            )
+                            source_text = _normalize_label(relation.source_text).lower()
+                            target_text = _normalize_label(relation.target_text).lower()
+                            source_id = entity_to_node_id.get(source_text)
+                            target_id = entity_to_node_id.get(target_text)
 
                             if not source_id or not target_id:
-                                # Try partial matching for multi-word entities
+                                # Try partial matching for multi-word entities,
+                                # among this text's own entities only
                                 if not source_id:
-                                    for key in entity_to_node_id:
-                                        if (
-                                            relation.source_text.lower() in key
-                                            or key in relation.source_text.lower()
-                                        ):
+                                    for key in text_keys:
+                                        if source_text in key or key in source_text:
                                             source_id = entity_to_node_id[key]
                                             break
                                 if not target_id:
-                                    for key in entity_to_node_id:
-                                        if (
-                                            relation.target_text.lower() in key
-                                            or key in relation.target_text.lower()
-                                        ):
+                                    for key in text_keys:
+                                        if target_text in key or key in target_text:
                                             target_id = entity_to_node_id[key]
                                             break
 
                             if not source_id or not target_id:
+                                continue
+
+                            # A node relating to itself carries no information
+                            if source_id == target_id:
                                 continue
 
                             # Handle relation_type as either enum or string
@@ -210,6 +307,8 @@ class KnowledgeGraphBuilder:
                                 target_id=target_id,
                                 rel_type=rel_type_value,
                                 properties={
+                                    "relation_id": _new_relation_id(),
+                                    "weight": _clamp_unit(relation.confidence),
                                     "confidence": relation.confidence,
                                     "context": relation.context or "",
                                     "extraction_method": getattr(
@@ -221,14 +320,21 @@ class KnowledgeGraphBuilder:
                                 },
                             )
 
-                            result.relation_ids.append(rel_data["id"])
+                            if rel_data is None:
+                                continue
+
+                            result.relation_ids.append(rel_data["properties"]["relation_id"])
                             result.relations_created += 1
 
+                        except GRAPH_UNAVAILABLE_ERRORS:
+                            raise
                         except Exception as e:
                             result.errors.append(
                                 f"Failed to create relation {relation.source_text} -> {relation.target_text}: {e}"
                             )
 
+            except GRAPH_UNAVAILABLE_ERRORS:
+                raise
             except Exception as e:
                 logger.error(f"Relation extraction failed: {e}")
                 result.errors.append(f"Relation extraction failed: {e}")
@@ -249,13 +355,20 @@ class KnowledgeGraphBuilder:
         Returns:
             Created GraphNode
         """
-        node_id = f"node_{uuid4().hex[:12]}"
+        node_id = _new_node_id()
 
         async with get_neo4j_session_context() as session:
             await create_node(
                 session,
                 node_type=node_data.type.value,
                 properties={
+                    # Metadata can't override node_id, type or source_doc_id
+                    # (which decides who owns the node)
+                    **{
+                        k: v
+                        for k, v in (node_data.metadata or {}).items()
+                        if k not in _NODE_FIELDS
+                    },
                     "node_id": node_id,
                     "label": node_data.label,
                     "type": node_data.type.value,
@@ -263,7 +376,6 @@ class KnowledgeGraphBuilder:
                     "source_doc_id": node_data.source_doc_id,
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     **({"embedding": embedding} if embedding else {}),
-                    **(node_data.metadata or {}),
                 },
             )
 
@@ -290,8 +402,8 @@ class KnowledgeGraphBuilder:
         """Add a relation between two nodes.
 
         Args:
-            source_node_id: Source node element ID
-            target_node_id: Target node element ID
+            source_node_id: Source node's node_id
+            target_node_id: Target node's node_id
             relation_type: Type of relation
             weight: Relation strength (0-1)
             metadata: Optional metadata
@@ -299,7 +411,7 @@ class KnowledgeGraphBuilder:
         Returns:
             Created GraphRelation
         """
-        relation_id = f"rel_{uuid4().hex[:12]}"
+        relation_id = _new_relation_id()
 
         async with get_neo4j_session_context() as session:
             await create_relationship(
@@ -308,10 +420,10 @@ class KnowledgeGraphBuilder:
                 target_id=target_node_id,
                 rel_type=relation_type.value,
                 properties={
+                    **(metadata or {}),
                     "relation_id": relation_id,
                     "weight": weight,
                     "created_at": datetime.now(timezone.utc).isoformat(),
-                    **(metadata or {}),
                 },
             )
 
@@ -328,7 +440,7 @@ class KnowledgeGraphBuilder:
         """Get a node by ID.
 
         Args:
-            node_id: Node element ID
+            node_id: The node's node_id property
 
         Returns:
             GraphNode if found, None otherwise
@@ -340,32 +452,9 @@ class KnowledgeGraphBuilder:
             return None
 
         props = result["properties"]
-
-        return GraphNode(
-            node_id=props.get("node_id", ""),
-            label=props.get("label", ""),
-            type=NodeType(props.get("type", "Concept")),
-            description=props.get("description"),
-            source_doc_id=props.get("source_doc_id", ""),
-            embedding=props.get("embedding"),
-            confidence=props.get("confidence", 1.0),
-            external_links=props.get("external_links", {}),
-            metadata={
-                k: v
-                for k, v in props.items()
-                if k
-                not in {
-                    "node_id",
-                    "label",
-                    "type",
-                    "description",
-                    "source_doc_id",
-                    "embedding",
-                    "confidence",
-                    "external_links",
-                }
-            },
-        )
+        node = _node_from_properties(props)
+        node.metadata = {k: v for k, v in props.items() if k not in _NODE_FIELDS}
+        return node
 
     async def search_nodes(
         self,
@@ -373,6 +462,7 @@ class KnowledgeGraphBuilder:
         node_type: NodeType | None = None,
         source_doc_id: str | None = None,
         limit: int = 50,
+        source_doc_ids: list[str] | None = None,
     ) -> list[GraphNode]:
         """Search for nodes in the graph.
 
@@ -381,46 +471,38 @@ class KnowledgeGraphBuilder:
             node_type: Optional node type filter
             source_doc_id: Optional source document filter
             limit: Maximum results
+            source_doc_ids: Optional filter to nodes from any of these
+                documents (an empty list matches nothing)
 
         Returns:
             List of matching nodes
         """
-        properties = {}
-        if source_doc_id:
-            properties["source_doc_id"] = source_doc_id
-
-        label = node_type.value if node_type else None
-
         async with get_neo4j_session_context() as session:
             results = await search_nodes(
                 session,
-                label=label,
-                properties=properties if properties else None,
+                label=node_type.value if node_type else None,
+                properties=_search_properties(source_doc_id, source_doc_ids),
                 limit=limit,
+                text=query,
             )
 
-        nodes = []
-        for result in results:
-            props = result["properties"]
+        return [_node_from_properties(result["properties"]) for result in results]
 
-            # Filter by query if provided
-            if query and query.lower() not in props.get("label", "").lower():
-                continue
-
-            nodes.append(
-                GraphNode(
-                    node_id=props.get("node_id", ""),
-                    label=props.get("label", ""),
-                    type=NodeType(props.get("type", "Concept")),
-                    description=props.get("description"),
-                    source_doc_id=props.get("source_doc_id", ""),
-                    embedding=props.get("embedding"),
-                    confidence=props.get("confidence", 1.0),
-                    external_links=props.get("external_links", {}),
-                )
+    async def count_nodes(
+        self,
+        query: str | None = None,
+        node_type: NodeType | None = None,
+        source_doc_id: str | None = None,
+        source_doc_ids: list[str] | None = None,
+    ) -> int:
+        """Count the nodes search_nodes would return without a limit."""
+        async with get_neo4j_session_context() as session:
+            return await count_nodes(
+                session,
+                label=node_type.value if node_type else None,
+                properties=_search_properties(source_doc_id, source_doc_ids),
+                text=query,
             )
-
-        return nodes
 
     async def get_related_nodes(
         self,
@@ -432,7 +514,7 @@ class KnowledgeGraphBuilder:
         """Get nodes related to a given node.
 
         Args:
-            node_id: Starting node element ID
+            node_id: Starting node's node_id
             relation_types: Optional filter for relation types
             max_depth: Maximum traversal depth
             limit: Maximum results
@@ -452,24 +534,7 @@ class KnowledgeGraphBuilder:
                 limit=limit,
             )
 
-        nodes = []
-        for result in results:
-            props = result["properties"]
-
-            nodes.append(
-                GraphNode(
-                    node_id=props.get("node_id", ""),
-                    label=props.get("label", ""),
-                    type=NodeType(props.get("type", "Concept")),
-                    description=props.get("description"),
-                    source_doc_id=props.get("source_doc_id", ""),
-                    embedding=props.get("embedding"),
-                    confidence=props.get("confidence", 1.0),
-                    external_links=props.get("external_links", {}),
-                )
-            )
-
-        return nodes
+        return [_node_from_properties(result["properties"]) for result in results]
 
     async def get_document_relations(
         self,
@@ -495,8 +560,8 @@ class KnowledgeGraphBuilder:
             RETURN a.node_id AS source_node_id,
                    b.node_id AS target_node_id,
                    type(r) AS relation_type,
-                   r.relation_id AS relation_id,
-                   r.weight AS weight
+                   coalesce(r.relation_id, elementId(r)) AS relation_id,
+                   coalesce(r.weight, r.confidence, 1.0) AS weight
             LIMIT $limit
             """
             result = await session.run(query, doc_id=doc_id, limit=limit)
@@ -512,11 +577,11 @@ class KnowledgeGraphBuilder:
 
             relations.append(
                 GraphRelation(
-                    relation_id=record.get("relation_id", f"rel_{uuid4().hex[:12]}"),
+                    relation_id=record["relation_id"],
                     source_node_id=record["source_node_id"],
                     target_node_id=record["target_node_id"],
                     type=rel_type,
-                    weight=record.get("weight", 1.0) or 1.0,
+                    weight=_clamp_unit(record["weight"]),
                 )
             )
 
@@ -531,22 +596,22 @@ class KnowledgeGraphBuilder:
         Returns:
             Number of nodes deleted
         """
-        deleted = 0
-
         async with get_neo4j_session_context() as session:
-            # Find all nodes for this document
-            nodes = await search_nodes(
-                session,
-                properties={"source_doc_id": doc_id},
-                limit=1000,
+            if session is None:
+                return 0
+
+            result = await session.run(
+                """
+                MATCH (n)
+                WHERE n.source_doc_id = $doc_id
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                doc_id=doc_id,
             )
+            record = await result.single()
 
-            # Delete each node
-            for node in nodes:
-                if await delete_node(session, node["id"], detach=True):
-                    deleted += 1
-
-        return deleted
+        return record["deleted"] if record else 0
 
 
 # Global builder instance

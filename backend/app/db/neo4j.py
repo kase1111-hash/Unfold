@@ -9,9 +9,16 @@ from typing import Any
 # Neo4j is optional - allows portable builds without graph database
 try:
     from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
-    from neo4j.exceptions import ServiceUnavailable, AuthError
+    from neo4j.exceptions import ServiceUnavailable, AuthError, SessionExpired
 
     NEO4J_AVAILABLE = True
+    # Errors meaning "the graph database can't be reached right now".
+    # Routes re-raise these and main.py maps them to 503 GRAPH_UNAVAILABLE.
+    GRAPH_UNAVAILABLE_ERRORS: tuple[type[Exception], ...] = (
+        ServiceUnavailable,
+        SessionExpired,
+        AuthError,
+    )
 except ImportError:
     AsyncGraphDatabase = None  # type: ignore
     AsyncDriver = None  # type: ignore
@@ -19,8 +26,10 @@ except ImportError:
     ServiceUnavailable = Exception  # type: ignore
     AuthError = Exception  # type: ignore
     NEO4J_AVAILABLE = False
+    GRAPH_UNAVAILABLE_ERRORS = ()
 
 from app.config import get_settings
+from app.models.graph import NodeType
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -64,6 +73,13 @@ ALLOWED_RELATIONSHIP_TYPES = frozenset({
     "PRECEDES",
     "FOLLOWS",
 })
+
+
+# Labels the app writes (one per NodeType). node_id lookups match on this
+# label expression so Neo4j can use the per-label node_id indexes created in
+# create_indexes() instead of scanning every node in the database.
+NODE_LABELS = tuple(t.value for t in NodeType)
+_NODE_LABEL_EXPR = "|".join(NODE_LABELS)
 
 
 class Neo4jValidationError(ValueError):
@@ -243,23 +259,28 @@ async def check_neo4j_connection() -> dict[str, str | bool]:
             "status": "healthy",
             "message": "Neo4j connection successful",
         }
+    # Health responses are public: log the driver's error text (it names
+    # hosts and addresses) instead of returning it.
     except AuthError as e:
+        logger.warning(f"Neo4j health check: authentication failed: {e}")
         return {
             "connected": False,
             "status": "auth_error",
-            "message": f"Authentication failed: {e}",
+            "message": "Neo4j authentication failed",
         }
     except ServiceUnavailable as e:
+        logger.warning(f"Neo4j health check: service unavailable: {e}")
         return {
             "connected": False,
             "status": "unavailable",
-            "message": f"Service unavailable: {e}",
+            "message": "Neo4j service unavailable",
         }
     except Exception as e:
+        logger.warning(f"Neo4j health check failed: {e}")
         return {
             "connected": False,
             "status": "error",
-            "message": str(e),
+            "message": "Neo4j health check failed",
         }
 
 
@@ -312,8 +333,8 @@ async def create_relationship(
 
     Args:
         session: Neo4j session
-        source_id: Source node element ID
-        target_id: Target node element ID
+        source_id: Source node's node_id property
+        target_id: Target node's node_id property
         rel_type: Relationship type (EXPLAINS, CITES, etc.) - validated against allowlist
         properties: Optional relationship properties
 
@@ -331,8 +352,8 @@ async def create_relationship(
 
     props = properties or {}
     query = f"""
-    MATCH (a), (b)
-    WHERE elementId(a) = $source_id AND elementId(b) = $target_id
+    MATCH (a:{_NODE_LABEL_EXPR} {{node_id: $source_id}}),
+          (b:{_NODE_LABEL_EXPR} {{node_id: $target_id}})
     CREATE (a)-[r:{validated_type} $props]->(b)
     RETURN r, elementId(r) as id
     """
@@ -349,11 +370,11 @@ async def get_node_by_id(
     session: "AsyncSession | None",
     node_id: str,
 ) -> dict[str, Any] | None:
-    """Get a node by its element ID.
+    """Get a node by its node_id property (the public node identifier).
 
     Args:
         session: Neo4j session
-        node_id: Node element ID
+        node_id: Node's node_id property
 
     Returns:
         Node data or None if not found or neo4j not available
@@ -361,10 +382,10 @@ async def get_node_by_id(
     if session is None:
         return None
 
-    query = """
-    MATCH (n)
-    WHERE elementId(n) = $node_id
+    query = f"""
+    MATCH (n:{_NODE_LABEL_EXPR} {{node_id: $node_id}})
     RETURN n, labels(n) as labels, elementId(n) as id
+    LIMIT 1
     """
     result = await session.run(query, node_id=node_id)
     record = await result.single()
@@ -377,22 +398,54 @@ async def get_node_by_id(
     }
 
 
+def _node_match(
+    label: str | None,
+    properties: dict[str, Any] | None,
+    text: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """MATCH ... WHERE ... clause and parameters shared by search and count."""
+    if label:
+        validate_node_type(label)
+
+    label_clause = f":{label}" if label else ""
+    where_clauses = []
+    params: dict[str, Any] = {}
+
+    if properties:
+        for i, (key, value) in enumerate(properties.items()):
+            param_name = f"prop_{i}"
+            op = "IN" if isinstance(value, (list, tuple)) else "="
+            where_clauses.append(f"n.{key} {op} ${param_name}")
+            params[param_name] = value
+
+    if text:
+        where_clauses.append("toLower(n.label) CONTAINS $text")
+        params["text"] = text.lower()
+
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return f"MATCH (n{label_clause})\n    {where_clause}", params
+
+
 async def search_nodes(
     session: "AsyncSession | None",
     label: str | None = None,
     properties: dict[str, Any] | None = None,
     limit: int = 50,
+    text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search for nodes by label and/or properties.
 
     Args:
         session: Neo4j session
         label: Optional node label filter (validated against allowlist)
-        properties: Optional property filters
+        properties: Optional property filters; a list value matches any of
+            its items (``n.key IN [...]``)
         limit: Maximum results
+        text: Optional case-insensitive substring of the node's label
 
     Returns:
-        List of matching nodes, or empty list if neo4j not available
+        List of matching nodes, most connected first (then by label and
+        node_id), or empty list if neo4j not available
 
     Raises:
         Neo4jValidationError: If label is invalid
@@ -400,26 +453,15 @@ async def search_nodes(
     if session is None:
         return []
 
-    # Validate label if provided
-    if label:
-        validate_node_type(label)
+    match, params = _node_match(label, properties, text)
+    params["limit"] = limit
 
-    label_clause = f":{label}" if label else ""
-    where_clauses = []
-    params = {"limit": limit}
-
-    if properties:
-        for i, (key, value) in enumerate(properties.items()):
-            param_name = f"prop_{i}"
-            where_clauses.append(f"n.{key} = ${param_name}")
-            params[param_name] = value
-
-    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
+    # Most connected first, so a limited result keeps the hubs and their
+    # edges; then by label and node_id, so it is always the same subset.
     query = f"""
-    MATCH (n{label_clause})
-    {where_clause}
+    {match}
     RETURN n, labels(n) as labels, elementId(n) as id
+    ORDER BY COUNT {{ (n)--() }} DESC, n.label, n.node_id
     LIMIT $limit
     """
     result = await session.run(query, **params)
@@ -434,6 +476,22 @@ async def search_nodes(
     ]
 
 
+async def count_nodes(
+    session: "AsyncSession | None",
+    label: str | None = None,
+    properties: dict[str, Any] | None = None,
+    text: str | None = None,
+) -> int:
+    """Count the nodes search_nodes would match without a limit."""
+    if session is None:
+        return 0
+
+    match, params = _node_match(label, properties, text)
+    result = await session.run(f"{match}\n    RETURN count(n) AS total", **params)
+    record = await result.single()
+    return record["total"] if record else 0
+
+
 async def traverse_graph(
     session: "AsyncSession | None",
     start_node_id: str,
@@ -446,7 +504,7 @@ async def traverse_graph(
 
     Args:
         session: Neo4j session
-        start_node_id: Starting node element ID
+        start_node_id: Starting node's node_id property
         relationship_types: Optional filter for relationship types (validated)
         direction: OUTGOING, INCOMING, or BOTH
         max_depth: Maximum traversal depth
@@ -479,8 +537,7 @@ async def traverse_graph(
         pattern = f"-{rel_pattern}-"
 
     query = f"""
-    MATCH (start){pattern}(end)
-    WHERE elementId(start) = $start_id
+    MATCH (start:{_NODE_LABEL_EXPR} {{node_id: $start_id}}){pattern}(end)
     RETURN DISTINCT end, labels(end) as labels, elementId(end) as id
     LIMIT $limit
     """
@@ -505,7 +562,7 @@ async def delete_node(
 
     Args:
         session: Neo4j session
-        node_id: Node element ID
+        node_id: Node's node_id property
         detach: If True, also delete relationships
 
     Returns:
@@ -516,8 +573,7 @@ async def delete_node(
 
     detach_clause = "DETACH " if detach else ""
     query = f"""
-    MATCH (n)
-    WHERE elementId(n) = $node_id
+    MATCH (n:{_NODE_LABEL_EXPR} {{node_id: $node_id}})
     {detach_clause}DELETE n
     RETURN count(n) as deleted
     """
@@ -541,12 +597,18 @@ async def create_indexes() -> None:
         # Create indexes for common node types
         indexes = [
             "CREATE INDEX concept_label IF NOT EXISTS FOR (n:Concept) ON (n.label)",
-            "CREATE INDEX concept_node_id IF NOT EXISTS FOR (n:Concept) ON (n.node_id)",
             "CREATE INDEX author_name IF NOT EXISTS FOR (n:Author) ON (n.name)",
             "CREATE INDEX paper_doi IF NOT EXISTS FOR (n:Paper) ON (n.doi)",
             "CREATE INDEX paper_title IF NOT EXISTS FOR (n:Paper) ON (n.title)",
             "CREATE INDEX method_label IF NOT EXISTS FOR (n:Method) ON (n.label)",
             "CREATE INDEX dataset_label IF NOT EXISTS FOR (n:Dataset) ON (n.label)",
+        ]
+        # node_id is the public node identifier; every node_id lookup matches
+        # on NODE_LABELS, so index it on each of them.
+        indexes += [
+            f"CREATE INDEX {label.lower()}_node_id IF NOT EXISTS "
+            f"FOR (n:{label}) ON (n.node_id)"
+            for label in NODE_LABELS
         ]
 
         for index_query in indexes:

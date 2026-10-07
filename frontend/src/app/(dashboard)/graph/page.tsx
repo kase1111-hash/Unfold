@@ -1,25 +1,40 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { KnowledgeGraph, NodeDetails } from "@/components/graph";
+import { useCallback, useEffect, useState } from "react";
+import { DocumentGraphPanel, KnowledgeGraph, NodeDetails } from "@/components/graph";
 import { useGraphStore } from "@/store";
-import { api } from "@/services/api";
-import { Search, Filter } from "lucide-react";
+import { api, getErrorMessage } from "@/services/api";
+import { Loader2 } from "lucide-react";
+import toast from "react-hot-toast";
 import type { Document } from "@/types";
 
 export default function GraphPage() {
-  const { selectedNodeId } = useGraphStore();
+  const selectedNodeId = useGraphStore((s) => s.selectedNodeId);
+  const nodeCount = useGraphStore((s) => s.nodes.length);
+  const linkCount = useGraphStore((s) => s.links.length);
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
+  const selectedDoc = documents.find((doc) => doc.doc_id === selectedDocId);
+
+  // A newer status of a document, found while its graph build was watched
+  const handleDocumentUpdate = useCallback((updated: Document) => {
+    setDocuments((docs) =>
+      docs.map((doc) => (doc.doc_id === updated.doc_id ? updated : doc))
+    );
+  }, []);
 
   useEffect(() => {
-    api.getDocuments(1, 100).then((res) => {
-      setDocuments(res.data);
-      if (res.data.length > 0) {
-        setSelectedDocId(res.data[0].doc_id);
-      }
-    });
+    api
+      .getDocuments(1, 100)
+      .then((res) => {
+        setDocuments(res.data);
+        if (res.data.length > 0) {
+          setSelectedDocId(res.data[0].doc_id);
+        }
+      })
+      .catch((error) => toast.error(getErrorMessage(error)))
+      .finally(() => setDocumentsLoaded(true));
   }, []);
 
   return (
@@ -41,10 +56,14 @@ export default function GraphPage() {
         <div className="flex flex-wrap gap-4">
           {/* Document selector */}
           <div className="flex-1 min-w-[200px]">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+            <label
+              htmlFor="graph-document"
+              className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5"
+            >
               Document
             </label>
             <select
+              id="graph-document"
               value={selectedDocId || ""}
               onChange={(e) => setSelectedDocId(e.target.value || null)}
               className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
@@ -57,33 +76,29 @@ export default function GraphPage() {
               ))}
             </select>
           </div>
-
-          {/* Search */}
-          <div className="flex-1 min-w-[200px]">
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
-              Search nodes
-            </label>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input
-                type="text"
-                placeholder="Search concepts..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary-500/50"
-              />
-            </div>
-          </div>
         </div>
       </div>
 
       {/* Graph and details */}
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <KnowledgeGraph
-            documentId={selectedDocId || undefined}
-            className="h-[600px]"
-          />
+          {/* Wait for the document list so the first document is loaded directly
+              (instead of loading "All documents" first and then replacing it) */}
+          {!documentsLoaded ? (
+            <div className="h-[600px] flex items-center justify-center bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
+              <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
+            </div>
+          ) : selectedDoc ? (
+            // Shows "Building knowledge graph…" while its build is pending or running
+            <DocumentGraphPanel
+              docId={selectedDoc.doc_id}
+              status={selectedDoc.status}
+              onDocumentUpdate={handleDocumentUpdate}
+              className="h-[600px]"
+            />
+          ) : (
+            <KnowledgeGraph className="h-[600px]" />
+          )}
         </div>
 
         <div className="space-y-4">
@@ -109,13 +124,13 @@ export default function GraphPage() {
               <div className="flex justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Total Nodes</span>
                 <span className="font-medium text-slate-900 dark:text-white">
-                  {useGraphStore.getState().nodes.length}
+                  {nodeCount}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-600 dark:text-slate-400">Total Links</span>
                 <span className="font-medium text-slate-900 dark:text-white">
-                  {useGraphStore.getState().links.length}
+                  {linkCount}
                 </span>
               </div>
             </div>
