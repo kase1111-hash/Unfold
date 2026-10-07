@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from app.db.neo4j import (
     GRAPH_UNAVAILABLE_ERRORS,
+    count_nodes,
     create_node,
     create_relationship,
     get_neo4j_session_context,
@@ -77,6 +78,17 @@ def _clamp_unit(value: float | None, default: float = 1.0) -> float:
     except (TypeError, ValueError):
         number = default
     return max(0.0, min(1.0, number))
+
+
+def _search_properties(
+    source_doc_id: str | None, source_doc_ids: list[str] | None
+) -> dict | None:
+    """Property filter for node search: one document, any of several, or none."""
+    if source_doc_id:
+        return {"source_doc_id": source_doc_id}
+    if source_doc_ids is not None:
+        return {"source_doc_id": list(source_doc_ids)}
+    return None
 
 
 def _node_from_properties(props: dict) -> GraphNode:
@@ -465,33 +477,32 @@ class KnowledgeGraphBuilder:
         Returns:
             List of matching nodes
         """
-        properties: dict = {}
-        if source_doc_id:
-            properties["source_doc_id"] = source_doc_id
-        elif source_doc_ids is not None:
-            properties["source_doc_id"] = list(source_doc_ids)
-
-        label = node_type.value if node_type else None
-
         async with get_neo4j_session_context() as session:
             results = await search_nodes(
                 session,
-                label=label,
-                properties=properties if properties else None,
+                label=node_type.value if node_type else None,
+                properties=_search_properties(source_doc_id, source_doc_ids),
                 limit=limit,
+                text=query,
             )
 
-        nodes = []
-        for result in results:
-            props = result["properties"]
+        return [_node_from_properties(result["properties"]) for result in results]
 
-            # Filter by query if provided
-            if query and query.lower() not in props.get("label", "").lower():
-                continue
-
-            nodes.append(_node_from_properties(props))
-
-        return nodes
+    async def count_nodes(
+        self,
+        query: str | None = None,
+        node_type: NodeType | None = None,
+        source_doc_id: str | None = None,
+        source_doc_ids: list[str] | None = None,
+    ) -> int:
+        """Count the nodes search_nodes would return without a limit."""
+        async with get_neo4j_session_context() as session:
+            return await count_nodes(
+                session,
+                label=node_type.value if node_type else None,
+                properties=_search_properties(source_doc_id, source_doc_ids),
+                text=query,
+            )
 
     async def get_related_nodes(
         self,

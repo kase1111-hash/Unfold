@@ -398,11 +398,40 @@ async def get_node_by_id(
     }
 
 
+def _node_match(
+    label: str | None,
+    properties: dict[str, Any] | None,
+    text: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """MATCH ... WHERE ... clause and parameters shared by search and count."""
+    if label:
+        validate_node_type(label)
+
+    label_clause = f":{label}" if label else ""
+    where_clauses = []
+    params: dict[str, Any] = {}
+
+    if properties:
+        for i, (key, value) in enumerate(properties.items()):
+            param_name = f"prop_{i}"
+            op = "IN" if isinstance(value, (list, tuple)) else "="
+            where_clauses.append(f"n.{key} {op} ${param_name}")
+            params[param_name] = value
+
+    if text:
+        where_clauses.append("toLower(n.label) CONTAINS $text")
+        params["text"] = text.lower()
+
+    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    return f"MATCH (n{label_clause})\n    {where_clause}", params
+
+
 async def search_nodes(
     session: "AsyncSession | None",
     label: str | None = None,
     properties: dict[str, Any] | None = None,
     limit: int = 50,
+    text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Search for nodes by label and/or properties.
 
@@ -412,10 +441,11 @@ async def search_nodes(
         properties: Optional property filters; a list value matches any of
             its items (``n.key IN [...]``)
         limit: Maximum results
+        text: Optional case-insensitive substring of the node's label
 
     Returns:
-        List of matching nodes ordered by label, then node_id, or empty
-        list if neo4j not available
+        List of matching nodes, most connected first (then by label and
+        node_id), or empty list if neo4j not available
 
     Raises:
         Neo4jValidationError: If label is invalid
@@ -423,29 +453,15 @@ async def search_nodes(
     if session is None:
         return []
 
-    # Validate label if provided
-    if label:
-        validate_node_type(label)
+    match, params = _node_match(label, properties, text)
+    params["limit"] = limit
 
-    label_clause = f":{label}" if label else ""
-    where_clauses = []
-    params = {"limit": limit}
-
-    if properties:
-        for i, (key, value) in enumerate(properties.items()):
-            param_name = f"prop_{i}"
-            op = "IN" if isinstance(value, (list, tuple)) else "="
-            where_clauses.append(f"n.{key} {op} ${param_name}")
-            params[param_name] = value
-
-    where_clause = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
-
-    # Ordered, so a limited result is always the same subset
+    # Most connected first, so a limited result keeps the hubs and their
+    # edges; then by label and node_id, so it is always the same subset.
     query = f"""
-    MATCH (n{label_clause})
-    {where_clause}
+    {match}
     RETURN n, labels(n) as labels, elementId(n) as id
-    ORDER BY n.label, n.node_id
+    ORDER BY COUNT {{ (n)--() }} DESC, n.label, n.node_id
     LIMIT $limit
     """
     result = await session.run(query, **params)
@@ -458,6 +474,22 @@ async def search_nodes(
         }
         for r in records
     ]
+
+
+async def count_nodes(
+    session: "AsyncSession | None",
+    label: str | None = None,
+    properties: dict[str, Any] | None = None,
+    text: str | None = None,
+) -> int:
+    """Count the nodes search_nodes would match without a limit."""
+    if session is None:
+        return 0
+
+    match, params = _node_match(label, properties, text)
+    result = await session.run(f"{match}\n    RETURN count(n) AS total", **params)
+    record = await result.single()
+    return record["total"] if record else 0
 
 
 async def traverse_graph(

@@ -878,18 +878,33 @@ class TestGraphNodeOperations:
         stored = {k: fetched["metadata"][k] for k in metadata}
         assert stored == {**metadata, "pages": [3.0, 4.5]}
 
-    def test_search_is_ordered_by_label_then_node_id(
+    def test_search_puts_most_connected_first_and_reports_total(
         self,
         client: TestClient,
         api_prefix: str,
         auth_headers: dict,
         empty_graph_document: dict,
     ):
-        """A limited result is always the same subset (it used to be
-        whatever Neo4j returned first), and up to 1000 nodes come back."""
+        """A limited result keeps the hubs (cutting by label dropped most edges
+        of large graphs) and is always the same subset; total counts every
+        match so the UI can say it was cut off. Up to 1000 nodes come back."""
         doc_id = empty_graph_document["doc_id"]
-        for label in ("Zeta", "Alpha", "Mu", "Mu", "Beta"):
-            _create_node(client, api_prefix, auth_headers, doc_id, label)
+        ids = {
+            label: _create_node(client, api_prefix, auth_headers, doc_id, label)
+            for label in ("Zeta", "Alpha", "Mu", "Beta")
+        }
+        unlinked_mu = _create_node(client, api_prefix, auth_headers, doc_id, "Mu")
+        for other in ("Alpha", "Beta", "Mu"):  # Zeta is the hub
+            linked = client.post(
+                f"{api_prefix}/graph/relations",
+                json={
+                    "source_node_id": ids["Zeta"],
+                    "target_node_id": ids[other],
+                    "relation_type": "EXPLAINS",
+                },
+                headers=auth_headers,
+            )
+            assert linked.status_code == 201, linked.text
 
         listed = client.get(
             f"{api_prefix}/graph/nodes",
@@ -903,10 +918,38 @@ class TestGraphNodeOperations:
         )
 
         assert listed.status_code == 200, listed.text
-        pairs = [(n["label"], n["node_id"]) for n in listed.json()["nodes"]]
-        assert [label for label, _ in pairs] == ["Alpha", "Beta", "Mu", "Mu", "Zeta"]
-        assert pairs == sorted(pairs)
-        assert [(n["label"], n["node_id"]) for n in first_two.json()["nodes"]] == pairs[:2]
+        nodes = listed.json()["nodes"]
+        # Zeta (3 links), then the 1-link nodes by label, then the unlinked Mu
+        assert [n["label"] for n in nodes] == ["Zeta", "Alpha", "Beta", "Mu", "Mu"]
+        assert nodes[3]["node_id"] == ids["Mu"]
+        assert nodes[4]["node_id"] == unlinked_mu
+        assert listed.json()["total"] == 5
+        assert [n["node_id"] for n in first_two.json()["nodes"]] == [
+            n["node_id"] for n in nodes[:2]
+        ]
+        assert first_two.json()["total"] == 5
+
+    def test_text_query_is_applied_before_the_limit(
+        self,
+        client: TestClient,
+        api_prefix: str,
+        auth_headers: dict,
+        empty_graph_document: dict,
+    ):
+        """The label filter used to run after the LIMIT, so it missed matches."""
+        doc_id = empty_graph_document["doc_id"]
+        for label in ("Alpha", "Beta", "Gamma radiation"):
+            _create_node(client, api_prefix, auth_headers, doc_id, label)
+
+        response = client.get(
+            f"{api_prefix}/graph/nodes",
+            params={"source_doc_id": doc_id, "query": "RADIATION", "limit": 1},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert [n["label"] for n in response.json()["nodes"]] == ["Gamma radiation"]
+        assert response.json()["total"] == 1
 
 
 @pytest.mark.requires_neo4j

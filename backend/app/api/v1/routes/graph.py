@@ -377,30 +377,28 @@ async def search_nodes(
     source_doc_id: str | None = Query(None, description="Filter by source document"),
     limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
 ) -> NodeListResponse:
-    """Search for nodes in the caller's documents, ordered by label (then
-    node_id), so a limited result is always the same subset."""
+    """Search for nodes in the caller's documents, most connected first
+    (then by label and node_id), so a limited result keeps the hubs and is
+    always the same subset. ``total`` counts every match, so callers can tell
+    when the result was cut off."""
     builder = get_graph_builder()
 
     if source_doc_id:
         await get_owned_document(db, source_doc_id, current_user)
-        nodes = await builder.search_nodes(
-            query=query,
-            node_type=node_type,
-            source_doc_id=source_doc_id,
-            limit=limit,
-        )
+        scope = {"source_doc_id": source_doc_id}
     else:
-        nodes = await builder.search_nodes(
-            query=query,
-            node_type=node_type,
-            source_doc_ids=sorted(await _owned_doc_ids(db, current_user)),
-            limit=limit,
-        )
+        scope = {"source_doc_ids": sorted(await _owned_doc_ids(db, current_user))}
 
-    return NodeListResponse(
-        nodes=nodes,
-        total=len(nodes),
+    nodes = await builder.search_nodes(
+        query=query, node_type=node_type, limit=limit, **scope
     )
+    total = (
+        len(nodes)
+        if len(nodes) < limit
+        else await builder.count_nodes(query=query, node_type=node_type, **scope)
+    )
+
+    return NodeListResponse(nodes=nodes, total=total)
 
 
 @router.get(
