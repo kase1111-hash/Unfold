@@ -446,16 +446,13 @@ export class MockApi {
       return { status: 204 };
     });
 
-    // Graph (nodes in a fixed order, at most `limit`)
+    // Graph (nodes in a fixed order, at most `limit`; total counts every match)
     this.on("GET", "/graph/nodes", (call) => {
       const limit = call.query.get("limit") ?? "50";
       if (Number(limit) > 1000) return limitTooHigh(limit, 1000);
       const docId = call.query.get("source_doc_id");
-      const nodes = (docId ? d.nodes.filter((n) => n.source_doc_id === docId) : d.nodes).slice(
-        0,
-        Number(limit)
-      );
-      return { body: { nodes, total: nodes.length } };
+      const matching = docId ? d.nodes.filter((n) => n.source_doc_id === docId) : d.nodes;
+      return { body: { nodes: matching.slice(0, Number(limit)), total: matching.length } };
     });
     this.on("GET", /^\/graph\/documents\/([^/]+)\/relations$/, (call, m) => {
       const limit = call.query.get("limit") ?? "500";

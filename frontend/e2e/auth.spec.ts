@@ -139,9 +139,9 @@ test.describe("Protected routes", () => {
 
         await expect(page).toHaveURL(/\/login$/);
         await expect(page.getByRole("heading", { name: "Welcome Back" })).toBeVisible();
-        // Only the (rejected) attempt to restore the session from the refresh
-        // cookie: protected pages are not rendered and fire no requests
-        expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /auth/refresh"]);
+        // Never signed in on this browser: no refresh probe (it would only use
+        // up the auth rate limit) and protected pages fire no requests
+        expect(api.calls.map((c) => `${c.method} ${c.path}`)).toEqual([]);
       });
     }
 
@@ -152,6 +152,14 @@ test.describe("Protected routes", () => {
       api.on("POST", "/auth/refresh", {
         body: { access_token: "restored-token", token_type: "bearer", expires_in: 1800 },
       });
+      // Signed in before on this browser (the store remembers the user), but
+      // the access token is gone
+      await page.addInitScript((user) => {
+        window.localStorage.setItem(
+          "auth-storage",
+          JSON.stringify({ state: { user }, version: 0 })
+        );
+      }, USER);
       await page.goto("/documents");
 
       await expect(page.getByRole("heading", { level: 1, name: "Documents" })).toBeVisible();

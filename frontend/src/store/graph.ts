@@ -22,6 +22,9 @@ interface GraphState {
   // Graph data
   nodes: GraphVisualizationNode[];
   links: GraphVisualizationLink[];
+  // How many nodes matched on the server; more than nodes.length when the
+  // graph was too large to load in full (the most connected are loaded)
+  totalNodes: number;
   isLoading: boolean;
   error: string | null;
   // Document whose graph is shown (null: all of the user's documents / none)
@@ -104,6 +107,7 @@ function resetForLoad(currentDocId: string | null): Partial<GraphState> {
     error: null,
     nodes: [],
     links: [],
+    totalNodes: 0,
     selectedNodeId: null,
     hoveredNodeId: null,
     buildError: null,
@@ -114,6 +118,7 @@ function resetForLoad(currentDocId: string | null): Partial<GraphState> {
 
 export const useGraphStore = create<GraphState>((set, get) => ({
   nodes: [],
+  totalNodes: 0,
   links: [],
   isLoading: false,
   error: null,
@@ -145,7 +150,11 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     }
     const relations =
       relationsResult.status === "fulfilled" ? relationsResult.value.relations : [];
-    set({ ...toGraphData(nodesResult.value.nodes, relations), isLoading: false });
+    set({
+      ...toGraphData(nodesResult.value.nodes, relations),
+      totalNodes: nodesResult.value.total,
+      isLoading: false,
+    });
   },
 
   loadGraphForAllDocuments: async () => {
@@ -154,7 +163,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
 
     try {
       // Without source_doc_id the backend returns nodes of the caller's documents
-      const { nodes } = await api.searchNodes({ limit: ALL_DOCUMENTS_NODE_LIMIT });
+      const { nodes, total } = await api.searchNodes({ limit: ALL_DOCUMENTS_NODE_LIMIT });
       // Relations are served per document
       const docIds = Array.from(new Set(nodes.map((n) => n.source_doc_id)));
       const relationResults = await Promise.allSettled(
@@ -165,7 +174,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       const relations = relationResults.flatMap((r) =>
         r.status === "fulfilled" ? r.value.relations : []
       );
-      set({ ...toGraphData(nodes, relations), isLoading: false });
+      set({ ...toGraphData(nodes, relations), totalNodes: total, isLoading: false });
     } catch (error) {
       if (seq !== loadSeq) return;
       set({ error: getErrorMessage(error), isLoading: false });

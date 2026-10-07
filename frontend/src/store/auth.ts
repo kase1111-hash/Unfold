@@ -96,9 +96,17 @@ export const useAuthStore = create<AuthState>()(
         initPromise ??= (async () => {
           set({ isLoading: true, initError: null });
           try {
-            // Without a stored access token the httpOnly refresh cookie may
-            // still hold a valid session: try it once before giving up
-            if (!api.isAuthenticated()) await api.refreshAccessToken();
+            if (!api.isAuthenticated()) {
+              // Nobody is remembered as signed in on this browser: probing the
+              // refresh cookie would only 401 and use up the strict auth limit
+              if (!get().user) {
+                set({ user: null, isLoading: false, isInitialized: true });
+                return;
+              }
+              // The httpOnly refresh cookie may still hold a valid session:
+              // try it once before giving up
+              await api.refreshAccessToken();
+            }
             // Validate the token by fetching the current user (a 401 is
             // refreshed and retried by the API client)
             const user = await api.getCurrentUser();

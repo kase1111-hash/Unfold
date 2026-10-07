@@ -17,6 +17,28 @@ const CURIE_NODE = "node_a1cedb2f2704";
 const POLONIUM_NODE = "node_c06fe41637f2";
 
 test.describe("Knowledge graph page", () => {
+  test("says when a large graph was cut to its most connected concepts", async ({
+    page,
+    api,
+  }) => {
+    api.on("GET", "/graph/nodes", () => ({
+      body: {
+        nodes: [
+          makeNode({ node_id: CURIE_NODE, label: "Marie Curie", source_doc_id: DOC1 }),
+          makeNode({ node_id: POLONIUM_NODE, label: "Polonium", source_doc_id: DOC1 }),
+        ],
+        total: 1200,
+      },
+    }));
+
+    await page.goto("/graph");
+
+    await expect(graphCircles(page)).toHaveCount(2);
+    await expect(page.getByTestId("graph-truncated")).toHaveText(
+      "Showing the 2 most connected of 1,200 concepts"
+    );
+  });
+
   test("draws the selected document's nodes and edges", async ({ page, api }) => {
     await page.goto("/graph");
 
@@ -24,6 +46,7 @@ test.describe("Knowledge graph page", () => {
     await expect(page.getByLabel("Document")).toHaveValue(DOC1);
     await expect(graphCircles(page)).toHaveCount(3);
     await expect(graphLines(page)).toHaveCount(2);
+    await expect(page.getByTestId("graph-truncated")).toHaveCount(0);
     await expect(page.locator('[data-testid="knowledge-graph"] g.nodes text')).toHaveText([
       "Marie Curie",
       "Radioactivity",

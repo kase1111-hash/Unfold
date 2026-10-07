@@ -52,6 +52,7 @@ function KnowledgeGraphInner({ documentId, className }: KnowledgeGraphProps) {
   const {
     nodes,
     links,
+    totalNodes,
     isLoading,
     error,
     selectedNodeId,
@@ -400,6 +401,17 @@ function KnowledgeGraphInner({ documentId, className }: KnowledgeGraphProps) {
               </>
             );
           })()}
+        </div>
+      )}
+
+      {/* Graph too large to load in full */}
+      {totalNodes > nodes.length && nodes.length > 0 && (
+        <div
+          data-testid="graph-truncated"
+          className="absolute bottom-4 left-4 z-10 max-w-xs bg-white dark:bg-slate-800 px-3 py-2 rounded-lg shadow-sm border border-slate-200 dark:border-slate-600 text-xs text-slate-600 dark:text-slate-300"
+        >
+          Showing the {nodes.length.toLocaleString()} most connected of{" "}
+          {totalNodes.toLocaleString()} concepts
         </div>
       )}
 
