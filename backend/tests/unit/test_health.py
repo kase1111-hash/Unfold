@@ -228,6 +228,36 @@ class TestHealthErrorDetails:
         }
         assert "could not connect to 10.20.30.40:5432" in caplog.text
 
+    async def test_neo4j_check_returns_generic_message(self, monkeypatch, caplog):
+        from neo4j.exceptions import ServiceUnavailable
+
+        from app.db import neo4j as neo4j_db
+
+        class BrokenSession:
+            async def __aenter__(self):
+                raise ServiceUnavailable(
+                    "Couldn't connect to graph-internal.example:7687 (resolved to 10.20.30.40)"
+                )
+
+            async def __aexit__(self, *exc):
+                return False
+
+        class BrokenDriver:
+            def session(self):
+                return BrokenSession()
+
+        caplog.set_level(logging.WARNING, logger="app.db.neo4j")
+        monkeypatch.setattr(neo4j_db, "_driver", BrokenDriver())
+
+        result = await neo4j_db.check_neo4j_connection()
+
+        assert result == {
+            "connected": False,
+            "status": "unavailable",
+            "message": "Neo4j service unavailable",
+        }
+        assert "10.20.30.40" in caplog.text
+
     @pytest.mark.requires_no_neo4j
     def test_neo4j_down_does_not_leak_its_address(
         self, client: TestClient, api_prefix: str

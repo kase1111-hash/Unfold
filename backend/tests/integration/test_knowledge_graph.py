@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from neo4j.exceptions import ServiceUnavailable
 
 import app.api.v1.routes.graph as graph_routes
+import app.main as main_module
 import app.services.graph.builder as builder_module
 import app.services.graph.document_graph as document_graph
 from app.api.v1.routes import documents as documents_routes
@@ -389,15 +390,38 @@ class TestDocumentRebuild:
         api_prefix: str,
         auth_headers: dict,
         empty_graph_document: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ):
-        """A process killed mid-build leaves the document in PROCESSING;
-        the startup reset puts it back to VALIDATED so it can be rebuilt."""
+        """A process killed mid-build leaves the document in PROCESSING; the
+        app's startup (the lifespan itself) puts it back to VALIDATED."""
         doc_id = empty_graph_document["doc_id"]
         _set_document_state(client, doc_id, DocumentStatus.PROCESSING, [])
 
-        reset = client.portal.call(document_graph.reset_interrupted_builds)
+        async def noop(*args, **kwargs):
+            return None
 
-        assert reset >= 1
+        async def neo4j_skipped():
+            return {"connected": False, "message": "skipped in test"}
+
+        # Re-run startup (as after a restart) without re-creating or closing
+        # the connections the shared test client uses.
+        for name in (
+            "init_postgres",
+            "create_tables",
+            "init_neo4j",
+            "init_faiss",
+            "create_neo4j_indexes",
+            "close_all_databases",
+        ):
+            monkeypatch.setattr(main_module, name, noop)
+        monkeypatch.setattr(main_module, "check_neo4j_connection", neo4j_skipped)
+
+        async def restart():
+            async with main_module.lifespan(main_module.app):
+                pass
+
+        client.portal.call(restart)
+
         response = client.get(f"{api_prefix}/documents/{doc_id}", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "validated"

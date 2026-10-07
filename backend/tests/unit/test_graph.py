@@ -525,6 +525,21 @@ class TestGraphBuilder:
         assert result.relations_created == 0
         assert result.errors == []
 
+    def test_partial_source_match_stays_within_chunk(self, fake_graph):
+        """A relation *source* that only partially matches an entity of an
+        earlier chunk is not linked to it (partial matching is per chunk)."""
+        known: dict[str, str] = {}
+        first = _builder([_entity("Marie Curie"), _entity("Paris")], SyncRelationExtractor([]))
+        asyncio.run(first.build_from_text("chunk 1", source_doc_id="doc_1", known_nodes=known))
+        second = _builder(
+            [_entity("radium"), _entity("polonium")],
+            SyncRelationExtractor([_relation("Paris France", "radium")]),
+        )
+
+        asyncio.run(second.build_from_text("chunk 2", source_doc_id="doc_1", known_nodes=known))
+
+        assert fake_graph.relationships == []
+
     def test_known_nodes_are_shared_across_calls(self, fake_graph):
         """One label -> node map per document build: an entity found again in
         a later chunk is not created twice, and relations can reach it."""
